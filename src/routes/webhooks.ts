@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import type { BusinessConfig } from '../config/business.schema.js';
 import { AgentOrchestrator } from '../lib/orchestrator.js';
 import { FacebookAdapter, type FacebookConfig } from '../adapters/platforms/index.js';
+import { getConversationByPhone, addMessage, updateLead } from '../lib/conversation.js';
 
 /**
  * Create webhook routes for a business
@@ -213,6 +214,85 @@ export function createWebhookRoutes(
         success: false,
         error: 'Failed to process event',
       });
+    }
+  });
+
+  /**
+   * iMessage - Inbound message webhook (from Cloud Mac)
+   */
+  router.post('/imessage/inbound', async (req: Request, res: Response) => {
+    // Validate API key
+    const apiKey = req.headers['x-api-key'] as string;
+    const expectedKey = process.env.IMESSAGE_WEBHOOK_SECRET;
+
+    if (!expectedKey || apiKey !== expectedKey) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    try {
+      const { from, message, messageId, timestamp } = req.body;
+
+      if (!from || !message) {
+        return res.status(400).json({ error: 'from and message are required' });
+      }
+
+      // Find existing conversation by phone number
+      const state = await getConversationByPhone(from);
+
+      if (!state) {
+        // No existing conversation - could create new one or ignore
+        console.log(`[iMessage] Inbound from unknown number: ***-***-${from.slice(-4)}`);
+        return res.json({
+          success: true,
+          action: 'ignored',
+          reason: 'no_existing_conversation',
+        });
+      }
+
+      // Add inbound message to conversation
+      await addMessage(state.id, 'user', message);
+
+      // Process through orchestrator
+      const response = await orchestrator.handleMessage(state.leadId, message, 'sms');
+
+      console.log(`[iMessage] Inbound processed for lead ${state.leadId}, response: ${response.message?.slice(0, 50)}...`);
+
+      res.json({
+        success: true,
+        conversationId: state.id,
+        leadId: state.leadId,
+        responseMessage: response.message,
+      });
+    } catch (error) {
+      console.error('[iMessage] Inbound webhook error:', error);
+      res.status(500).json({ error: 'Failed to process inbound message' });
+    }
+  });
+
+  /**
+   * iMessage - Delivery status webhook (from Cloud Mac)
+   */
+  router.post('/imessage/status', async (req: Request, res: Response) => {
+    // Validate API key
+    const apiKey = req.headers['x-api-key'] as string;
+    const expectedKey = process.env.IMESSAGE_WEBHOOK_SECRET;
+
+    if (!expectedKey || apiKey !== expectedKey) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    try {
+      const { messageId, status, to, timestamp, error } = req.body;
+
+      console.log(`[iMessage] Status update: ${messageId} -> ${status}${error ? ` (${error})` : ''}`);
+
+      // Could update CRM or internal tracking here
+      // For now, just log it
+
+      res.json({ success: true, received: true });
+    } catch (error) {
+      console.error('[iMessage] Status webhook error:', error);
+      res.status(500).json({ error: 'Failed to process status update' });
     }
   });
 

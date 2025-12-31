@@ -33,6 +33,38 @@ export const BusinessHoursSchema = z.object({
   sunday: z.literal(null).optional(),
 });
 
+/**
+ * Sales Process Schema
+ *
+ * Defines the workflow from lead to close. This is CORE logic,
+ * but the steps and consultation details are business-configurable.
+ */
+export const SalesProcessSchema = z.object({
+  // Sales workflow steps
+  steps: z.array(z.enum(['chat', 'phone', 'consultation', 'proposal', 'close']))
+    .default(['chat', 'phone', 'consultation', 'proposal']),
+
+  // Consultation details
+  consultationType: z.enum(['in-home', 'showroom', 'virtual', 'phone-only']).default('in-home'),
+  consultationDuration: z.number().default(45), // minutes
+  requireBothDecisionMakers: z.boolean().default(true),
+
+  // Phone call settings
+  phoneCallDuration: z.number().default(10), // minutes for initial phone call
+  phoneCallPurpose: z.string().default('Learn more about your vision and schedule your free consultation'),
+});
+
+/**
+ * Lead Scoring Schema
+ *
+ * Timeline-based scoring for prioritization
+ */
+export const LeadScoringSchema = z.object({
+  hotTimeline: z.number().default(3),   // 0-3 months = HOT
+  warmTimeline: z.number().default(6),  // 3-6 months = WARM
+  // 6+ months = COOL
+});
+
 export const CrmConfigSchema = z.object({
   type: z.enum(['gohighlevel', 'paintscout', 'pipedrive', 'hubspot', 'custom']),
   webhookUrl: z.string().url().optional(),
@@ -40,8 +72,26 @@ export const CrmConfigSchema = z.object({
   apiUrl: z.string().url().optional(),
 });
 
+export const TextingConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  channel: z.enum(['imessage', 'twilio', 'none']).default('none'),
+  imessageEndpoint: z.string().url().optional(),
+  imessageApiKey: z.string().optional(),
+  timezone: z.string().default('America/New_York'),
+  quietHours: z.object({
+    enabled: z.boolean().default(true),
+    start: z.number().min(0).max(23).default(20), // 8pm
+    end: z.number().min(0).max(23).default(8),     // 8am
+  }).optional(),
+  rateLimits: z.object({
+    maxPerLeadPerDay: z.number().default(3),
+    maxFollowupsPerWeek: z.number().default(3),
+  }).optional(),
+});
+
 export const BusinessConfigSchema = z.object({
   // Core identity
+  slug: z.string().regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens'),
   businessName: z.string(),
   ownerName: z.string(),
   businessType: z.enum(['painting', 'cabinets', 'roofing', 'plumbing', 'hvac', 'electrical', 'landscaping', 'cleaning', 'general_contractor', 'other']),
@@ -61,14 +111,23 @@ export const BusinessConfigSchema = z.object({
   // Services offered
   services: z.array(ServiceSchema),
 
-  // Team (for scheduling)
-  team: z.array(TeamMemberSchema).optional(),
+  // Team (for scheduling and personalization)
+  team: z.array(TeamMemberSchema).default([]),
 
   // Business hours
   hours: BusinessHoursSchema,
 
+  // Sales process
+  salesProcess: SalesProcessSchema.optional(),
+
+  // Lead scoring thresholds
+  leadScoring: LeadScoringSchema.optional(),
+
   // CRM integration
   crm: CrmConfigSchema,
+
+  // Texting/SMS configuration
+  texting: TextingConfigSchema.optional(),
 
   // Brand voice
   personality: z.object({
@@ -109,3 +168,7 @@ export const BusinessConfigSchema = z.object({
 export type BusinessConfig = z.infer<typeof BusinessConfigSchema>;
 export type Service = z.infer<typeof ServiceSchema>;
 export type CrmConfig = z.infer<typeof CrmConfigSchema>;
+export type TextingConfig = z.infer<typeof TextingConfigSchema>;
+export type SalesProcess = z.infer<typeof SalesProcessSchema>;
+export type LeadScoring = z.infer<typeof LeadScoringSchema>;
+export type TeamMember = z.infer<typeof TeamMemberSchema>;

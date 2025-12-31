@@ -1,10 +1,18 @@
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages.js';
+import {
+  saveConversation,
+  getConversationById,
+  getConversationByLeadId,
+  getConversationByPhoneNumber,
+  getActiveConversations as getActiveFromStorage,
+  getConversationsNeedingFollowUp as getFollowUpFromStorage,
+} from '../storage/redis.js';
 
 /**
  * Conversation State Management
  *
  * Tracks conversation history, lead info, and routing context.
- * In production, replace in-memory storage with Redis or PostgreSQL.
+ * Uses Redis for persistent storage (falls back to in-memory if unavailable).
  */
 
 export type LeadStatus =
@@ -17,6 +25,7 @@ export type LeadStatus =
   | 'won'
   | 'lost';
 
+export type LeadTemperature = 'hot' | 'warm' | 'cool';
 export type AgentType = 'sdr' | 'reminder' | 'followup';
 export type Platform = 'web' | 'facebook' | 'sms' | 'email';
 
@@ -31,9 +40,14 @@ export interface LeadInfo {
   timeline?: string;
   budget?: string;
   status: LeadStatus;
+  temperature?: LeadTemperature;
+  decisionMaker?: 'yes' | 'no' | 'unknown';
   source: Platform;
   createdAt: Date;
   updatedAt: Date;
+  // Texting consent (TCPA compliance)
+  textingConsent: boolean;
+  textingConsentTimestamp?: Date;
 }
 
 export interface ConversationState {
@@ -48,18 +62,14 @@ export interface ConversationState {
   metadata: Record<string, unknown>;
 }
 
-// In-memory storage (replace with Redis/Postgres in production)
-const conversations = new Map<string, ConversationState>();
-const leadToConversation = new Map<string, string>(); // leadId -> conversationId
-
 /**
  * Create a new conversation for a lead
  */
-export function createConversation(
+export async function createConversation(
   leadId: string,
   platform: Platform,
   initialLead?: Partial<LeadInfo>
-): ConversationState {
+): Promise<ConversationState> {
   const conversationId = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const now = new Date();
 
@@ -69,6 +79,7 @@ export function createConversation(
     source: platform,
     createdAt: now,
     updatedAt: now,
+    textingConsent: false, // Must be explicitly granted
     ...initialLead,
   };
 
@@ -84,8 +95,7 @@ export function createConversation(
     metadata: {},
   };
 
-  conversations.set(conversationId, state);
-  leadToConversation.set(leadId, conversationId);
+  await saveConversation(state);
 
   return state;
 }
@@ -93,32 +103,36 @@ export function createConversation(
 /**
  * Get conversation by ID
  */
-export function getConversation(conversationId: string): ConversationState | undefined {
-  return conversations.get(conversationId);
+export async function getConversation(
+  conversationId: string
+): Promise<ConversationState | undefined> {
+  return getConversationById(conversationId);
 }
 
 /**
  * Get conversation by lead ID
  */
-export function getConversationByLead(leadId: string): ConversationState | undefined {
-  const conversationId = leadToConversation.get(leadId);
-  if (!conversationId) return undefined;
-  return conversations.get(conversationId);
+export async function getConversationByLead(
+  leadId: string
+): Promise<ConversationState | undefined> {
+  return getConversationByLeadId(leadId);
 }
 
 /**
  * Add a message to conversation history
  */
-export function addMessage(
+export async function addMessage(
   conversationId: string,
   role: 'user' | 'assistant',
   content: string
-): ConversationState | undefined {
-  const state = conversations.get(conversationId);
+): Promise<ConversationState | undefined> {
+  const state = await getConversationById(conversationId);
   if (!state) return undefined;
 
   state.messages.push({ role, content });
   state.lastMessageAt = new Date();
+
+  await saveConversation(state);
 
   return state;
 }
@@ -126,11 +140,11 @@ export function addMessage(
 /**
  * Update lead information
  */
-export function updateLead(
+export async function updateLead(
   conversationId: string,
   updates: Partial<LeadInfo>
-): ConversationState | undefined {
-  const state = conversations.get(conversationId);
+): Promise<ConversationState | undefined> {
+  const state = await getConversationById(conversationId);
   if (!state) return undefined;
 
   state.lead = {
@@ -139,22 +153,26 @@ export function updateLead(
     updatedAt: new Date(),
   };
 
+  await saveConversation(state);
+
   return state;
 }
 
 /**
  * Switch to a different agent
  */
-export function switchAgent(
+export async function switchAgent(
   conversationId: string,
   agent: AgentType
-): ConversationState | undefined {
-  const state = conversations.get(conversationId);
+): Promise<ConversationState | undefined> {
+  const state = await getConversationById(conversationId);
   if (!state) return undefined;
 
+  state.metadata.previousAgent = state.currentAgent;
   state.currentAgent = agent;
   state.metadata.lastAgentSwitch = new Date().toISOString();
-  state.metadata.previousAgent = state.currentAgent;
+
+  await saveConversation(state);
 
   return state;
 }
@@ -162,26 +180,26 @@ export function switchAgent(
 /**
  * Get all active conversations (for follow-up scheduling)
  */
-export function getActiveConversations(): ConversationState[] {
-  return Array.from(conversations.values()).filter(
-    (c) => !['won', 'lost'].includes(c.lead.status)
-  );
+export async function getActiveConversations(): Promise<ConversationState[]> {
+  return getActiveFromStorage();
 }
 
 /**
  * Get conversations needing follow-up
  */
-export function getConversationsNeedingFollowUp(
+export async function getConversationsNeedingFollowUp(
   maxAgeHours: number = 24
-): ConversationState[] {
-  const cutoff = new Date(Date.now() - maxAgeHours * 60 * 60 * 1000);
+): Promise<ConversationState[]> {
+  return getFollowUpFromStorage(maxAgeHours);
+}
 
-  return Array.from(conversations.values()).filter(
-    (c) =>
-      c.lastMessageAt < cutoff &&
-      !['won', 'lost'].includes(c.lead.status) &&
-      c.lead.status !== 'new'
-  );
+/**
+ * Get conversation by phone number (for inbound SMS/iMessage)
+ */
+export async function getConversationByPhone(
+  phone: string
+): Promise<ConversationState | undefined> {
+  return getConversationByPhoneNumber(phone);
 }
 
 /**
@@ -199,6 +217,8 @@ export function buildConversationContext(state: ConversationState): string {
   context += `- **Project Details**: ${lead.projectDetails || 'Not provided'}\n`;
   context += `- **Timeline**: ${lead.timeline || 'Not specified'}\n`;
   context += `- **Status**: ${lead.status}\n`;
+  context += `- **Temperature**: ${lead.temperature || 'Not scored'}\n`;
+  context += `- **Decision Maker**: ${lead.decisionMaker || 'Unknown'}\n`;
   context += `- **Platform**: ${platform}\n`;
   context += `- **Messages Exchanged**: ${messages.length}\n`;
 

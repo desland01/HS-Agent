@@ -3,6 +3,7 @@ import type { MessageParam } from '@anthropic-ai/sdk/resources/messages.js';
 import type { BusinessConfig } from '../config/business.schema.js';
 import type { ConversationState, LeadInfo } from '../lib/conversation.js';
 import { buildConversationContext } from '../lib/conversation.js';
+import { sendText, type SendResult, type MessagePurpose } from '../adapters/channels/index.js';
 
 /**
  * Base Agent Class
@@ -187,5 +188,27 @@ export abstract class BaseAgent {
         actions: [],
       };
     }
+  }
+
+  /**
+   * Send a text message directly (helper for agents that need to text outside actions)
+   *
+   * This is useful for situations where an agent needs to send a text
+   * without going through the orchestrator's action processing.
+   */
+  protected async sendTextMessage(options: {
+    to: string;
+    body: string;
+    purpose: MessagePurpose;
+    leadId?: string;
+    conversationId?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<SendResult | null> {
+    if (!this.config.texting?.enabled) {
+      console.log(`[${this.constructor.name}] Texting not enabled`);
+      return null;
+    }
+
+    return sendText(this.config, options);
   }
 }

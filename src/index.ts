@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { createWebhookRoutes } from './routes/webhooks.js';
 import type { FacebookConfig } from './adapters/platforms/index.js';
+import { initializeStorage, isUsingRedis } from './storage/redis.js';
 
 // Import business configs
 import orangeBlossomConfig from './config/businesses/orange-blossom.js';
@@ -64,15 +65,21 @@ app.get('/', (_req, res) => {
   });
 });
 
-// Start server
+// Start server with async initialization
 const PORT = process.env.PORT || 3001;
 
-app.listen(PORT, () => {
-  console.log(`
+async function startServer() {
+  // Initialize Redis storage
+  await initializeStorage();
+  const storageType = isUsingRedis() ? 'Redis (persistent)' : 'In-Memory (volatile)';
+
+  app.listen(PORT, () => {
+    console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║           HOME SERVICE AGENT - RUNNING                      ║
 ╠════════════════════════════════════════════════════════════╣
 ║  Port: ${PORT}                                                ║
+║  Storage: ${storageType.padEnd(36)}║
 ║                                                            ║
 ║  Businesses configured:                                    ║
 ║    • Orange Blossom Cabinets → /api/orange-blossom         ║
@@ -87,7 +94,10 @@ app.listen(PORT, () => {
 ║    POST /facebook/webhook - FB messages & leads            ║
 ║    GET  /health         - Health check                     ║
 ╚════════════════════════════════════════════════════════════╝
-  `);
-});
+    `);
+  });
+}
+
+startServer().catch(console.error);
 
 export default app;

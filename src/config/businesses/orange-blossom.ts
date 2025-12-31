@@ -8,6 +8,7 @@ import type { BusinessConfig } from '../business.schema.js';
  */
 export const orangeBlossomConfig: BusinessConfig = {
   // Core identity
+  slug: 'orange-blossom',
   businessName: 'Orange Blossom Cabinets',
   ownerName: 'Brandon',
   businessType: 'cabinets',
@@ -62,6 +63,28 @@ export const orangeBlossomConfig: BusinessConfig = {
     },
   ],
 
+  // Team members
+  team: [
+    { name: 'Brandon', role: 'Owner', canBook: true },
+    { name: 'Design Team', role: 'Designer', canBook: true },
+  ],
+
+  // Sales process
+  salesProcess: {
+    steps: ['chat', 'phone', 'consultation', 'proposal'],
+    consultationType: 'in-home',
+    consultationDuration: 45,
+    requireBothDecisionMakers: true,
+    phoneCallDuration: 10,
+    phoneCallPurpose: 'Learn more about your vision and schedule your free in-home design consultation',
+  },
+
+  // Lead scoring thresholds
+  leadScoring: {
+    hotTimeline: 3,   // 0-3 months = HOT
+    warmTimeline: 6,  // 3-6 months = WARM
+  },
+
   // Business hours
   hours: {
     timezone: 'America/New_York',
@@ -74,6 +97,24 @@ export const orangeBlossomConfig: BusinessConfig = {
     type: 'paintscout',
     webhookUrl: process.env.PAINTSCOUT_WEBHOOK_URL,
     apiKey: process.env.PAINTSCOUT_API_KEY,
+  },
+
+  // iMessage/SMS configuration
+  texting: {
+    enabled: !!process.env.OB_IMESSAGE_ENDPOINT,
+    channel: 'imessage',
+    imessageEndpoint: process.env.OB_IMESSAGE_ENDPOINT,
+    imessageApiKey: process.env.OB_IMESSAGE_API_KEY,
+    timezone: 'America/New_York',
+    quietHours: {
+      enabled: true,
+      start: 20, // 8pm
+      end: 8,    // 8am
+    },
+    rateLimits: {
+      maxPerLeadPerDay: 3,
+      maxFollowupsPerWeek: 3,
+    },
   },
 
   // Brand voice

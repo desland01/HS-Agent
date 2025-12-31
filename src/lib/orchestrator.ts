@@ -9,6 +9,7 @@ import {
 } from './conversation.js';
 import { createAgent, selectAgent, type AgentResponse } from '../agents/index.js';
 import { createCrmAdapter, type BaseCrmAdapter } from '../adapters/crm/index.js';
+import { sendText, type MessagePurpose } from '../adapters/channels/index.js';
 
 /**
  * Agent Orchestrator
@@ -38,7 +39,7 @@ export class AgentOrchestrator {
     const leadId = `lead_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     // Create conversation
-    const state = createConversation(leadId, platform, leadInfo);
+    const state = await createConversation(leadId, platform, leadInfo);
 
     // Create contact in CRM
     await this.crm.upsertContact(state.lead);
@@ -52,13 +53,17 @@ export class AgentOrchestrator {
 
     // Store the response
     if (response.message) {
-      addMessage(state.id, 'assistant', response.message);
+      await addMessage(state.id, 'assistant', response.message);
     }
 
     // Process any actions
     await this.processActions(state.id, response);
 
-    return response;
+    // Include leadId in response for web chat
+    return {
+      ...response,
+      leadUpdates: { ...response.leadUpdates, id: leadId },
+    };
   }
 
   /**
@@ -70,23 +75,23 @@ export class AgentOrchestrator {
     platform: Platform
   ): Promise<AgentResponse> {
     // Get or create conversation
-    let state = getConversationByLead(leadId);
+    let state = await getConversationByLead(leadId);
 
     if (!state) {
       // New conversation from unknown lead
-      state = createConversation(leadId, platform);
+      state = await createConversation(leadId, platform);
     }
 
     // Add user message
-    addMessage(state.id, 'user', message);
+    await addMessage(state.id, 'user', message);
 
     // Determine which agent should handle this
     const agentType = selectAgent(state.lead.status);
 
     // Switch agent if needed
     if (agentType !== state.currentAgent) {
-      switchAgent(state.id, agentType);
-      state = getConversationByLead(leadId)!;
+      await switchAgent(state.id, agentType);
+      state = (await getConversationByLead(leadId))!;
     }
 
     // Get response from agent
@@ -95,7 +100,7 @@ export class AgentOrchestrator {
 
     // Store assistant response
     if (response.message) {
-      addMessage(state.id, 'assistant', response.message);
+      await addMessage(state.id, 'assistant', response.message);
     }
 
     // Process actions
@@ -103,7 +108,7 @@ export class AgentOrchestrator {
 
     // Handle agent hand-off
     if (response.suggestedNextAgent && response.suggestedNextAgent !== state.currentAgent) {
-      switchAgent(state.id, response.suggestedNextAgent);
+      await switchAgent(state.id, response.suggestedNextAgent);
     }
 
     return response;
@@ -117,7 +122,7 @@ export class AgentOrchestrator {
     eventType: string,
     eventData: Record<string, unknown>
   ): Promise<AgentResponse | null> {
-    const state = getConversationByLead(leadId);
+    const state = await getConversationByLead(leadId);
     if (!state) {
       console.warn(`No conversation found for lead ${leadId}`);
       return null;
@@ -152,7 +157,7 @@ export class AgentOrchestrator {
 
     // Switch to appropriate agent
     if (agentType !== state.currentAgent) {
-      switchAgent(state.id, agentType);
+      await switchAgent(state.id, agentType);
     }
 
     // Generate proactive message
@@ -161,7 +166,7 @@ export class AgentOrchestrator {
 
     // Store response
     if (response.message) {
-      addMessage(state.id, 'assistant', response.message);
+      await addMessage(state.id, 'assistant', response.message);
     }
 
     // Process actions
@@ -177,14 +182,14 @@ export class AgentOrchestrator {
     conversationId: string,
     response: AgentResponse
   ): Promise<void> {
-    const state = getConversationByLead(conversationId);
+    const state = await getConversationByLead(conversationId);
 
     // Update lead info if provided
     if (response.leadUpdates) {
-      updateLead(conversationId, response.leadUpdates);
+      await updateLead(conversationId, response.leadUpdates);
 
       // Sync to CRM
-      const updatedState = getConversationByLead(conversationId);
+      const updatedState = await getConversationByLead(conversationId);
       if (updatedState) {
         await this.crm.upsertContact(updatedState.lead);
       }
@@ -212,8 +217,27 @@ export class AgentOrchestrator {
             break;
 
           case 'send_sms':
-            // TODO: Implement SMS sending
-            console.log('Send SMS:', action.payload);
+            if (state?.lead?.phone && state?.lead?.textingConsent) {
+              const result = await sendText(this.config, {
+                to: state.lead.phone,
+                body: action.payload.body as string,
+                purpose: (action.payload.purpose as MessagePurpose) || 'transactional',
+                leadId: state.lead.id,
+                conversationId: state.id,
+              });
+
+              if (result) {
+                // Log result to CRM
+                const statusMsg = result.status === 'sent'
+                  ? `SMS sent: ${(action.payload.body as string).slice(0, 50)}...`
+                  : `SMS ${result.status}: ${result.error || result.scheduledFor?.toISOString() || 'unknown'}`;
+                await this.crm.addNote(state.lead.id, statusMsg);
+              }
+            } else if (state?.lead && !state.lead.textingConsent) {
+              console.log(`[Orchestrator] Cannot send SMS - no consent for lead ${state.lead.id}`);
+            } else if (state?.lead && !state.lead.phone) {
+              console.log(`[Orchestrator] Cannot send SMS - no phone for lead ${state.lead.id}`);
+            }
             break;
 
           case 'escalate_to_human':

@@ -13,7 +13,7 @@ Multi-platform AI agent system for home service businesses. One codebase, any bu
   - Website chat widget
   - Facebook Messenger
   - Facebook Lead Ads
-  - SMS (coming soon)
+  - iMessage/SMS via Cloud Mac
 
 - **CRM Integrations**
   - GoHighLevel
@@ -86,6 +86,8 @@ All endpoints are prefixed with `/api/{business-slug}/`
 | `/event` | POST | Trigger event (reminders, etc.) |
 | `/facebook/webhook` | GET | FB webhook verification |
 | `/facebook/webhook` | POST | FB messages & leads |
+| `/imessage/inbound` | POST | Receive iMessage replies |
+| `/imessage/status` | POST | Receive delivery status |
 | `/health` | GET | Health check |
 
 ## Facebook Setup
@@ -96,6 +98,48 @@ All endpoints are prefixed with `/api/{business-slug}/`
 4. Set webhook URL to `https://your-domain.com/api/{business}/facebook/webhook`
 5. Subscribe to `messages`, `messaging_postbacks`, `leadgen` events
 6. Add environment variables
+
+## iMessage/SMS Setup (Cloud Mac)
+
+This system integrates with Cloud Mac to send iMessages from a dedicated Mac.
+
+### Requirements
+- A Mac running macOS with Messages app configured
+- Cloud Mac API server running on that Mac
+- Public endpoint for the API (or tunnel via ngrok/Cloudflare)
+
+### Configuration
+
+1. Add environment variables:
+```bash
+OB_IMESSAGE_ENDPOINT=https://mac-ob.yourdomain.com/api/send-imessage
+OB_IMESSAGE_API_KEY=your-secret-api-key
+IMESSAGE_WEBHOOK_SECRET=your-webhook-secret
+```
+
+2. Enable in business config:
+```typescript
+texting: {
+  enabled: true,
+  channel: 'imessage',
+  imessageEndpoint: process.env.OB_IMESSAGE_ENDPOINT,
+  imessageApiKey: process.env.OB_IMESSAGE_API_KEY,
+  timezone: 'America/New_York',
+  quietHours: { enabled: true, start: 20, end: 8 },
+  rateLimits: { maxPerLeadPerDay: 3, maxFollowupsPerWeek: 3 },
+}
+```
+
+3. Configure Cloud Mac webhooks (for inbound messages):
+   - Inbound: `POST https://your-domain.com/api/{business}/imessage/inbound`
+   - Status: `POST https://your-domain.com/api/{business}/imessage/status`
+   - Both require `x-api-key` header matching `IMESSAGE_WEBHOOK_SECRET`
+
+### Features
+- **Quiet Hours**: Messages queued outside business hours (8am-8pm by default)
+- **Rate Limiting**: Max 3 texts per lead per day (in-memory, resets on restart)
+- **TCPA Compliance**: Requires explicit `textingConsent` on lead record
+- **Phone Masking**: Only last 4 digits logged for privacy
 
 ## Deployment
 

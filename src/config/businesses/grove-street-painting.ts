@@ -8,6 +8,7 @@ import type { BusinessConfig } from '../business.schema.js';
  */
 export const groveStreetConfig: BusinessConfig = {
   // Core identity
+  slug: 'grove-street',
   businessName: 'Grove Street Painting',
   ownerName: 'Desmond Landry',
   businessType: 'painting',
@@ -62,6 +63,27 @@ export const groveStreetConfig: BusinessConfig = {
       estimateTimeframe: 'Varies by project size',
     },
   ],
+
+  // Team members
+  team: [
+    { name: 'Desmond', role: 'Owner', canBook: true },
+  ],
+
+  // Sales process
+  salesProcess: {
+    steps: ['chat', 'phone', 'consultation', 'proposal'],
+    consultationType: 'in-home',
+    consultationDuration: 30,
+    requireBothDecisionMakers: true,
+    phoneCallDuration: 10,
+    phoneCallPurpose: 'Discuss your project and schedule a free in-home estimate',
+  },
+
+  // Lead scoring thresholds
+  leadScoring: {
+    hotTimeline: 3,   // 0-3 months = HOT
+    warmTimeline: 6,  // 3-6 months = WARM
+  },
 
   // Business hours
   hours: {
