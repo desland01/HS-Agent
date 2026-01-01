@@ -32,6 +32,25 @@ import { bashServer, setWorkingDirectory as setBashDir } from './tools/bash.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
+// Skills and Feedback systems
+import {
+  matchSkillsToTask,
+  buildSkillContext,
+  detectTaskType,
+  type TaskType
+} from './skills/loader.js';
+import {
+  findRelevantPatterns,
+  buildPatternContext,
+  recordSuccess,
+  type CodePattern
+} from './feedback/patterns.js';
+import {
+  getWarningsForTask,
+  buildCorrectionContext,
+  buildReviewChecklist
+} from './feedback/corrections.js';
+
 // Configuration
 const MAX_RETRIES = 3;
 const MAX_CONSECUTIVE_FAILURES = 3; // Circuit breaker - stop after this many failures
@@ -48,7 +67,7 @@ setGitDir(WORKING_DIR);
 setBashDir(WORKING_DIR);
 
 /**
- * Issue interface
+ * Issue interface matching Linear's issue structure
  */
 interface Issue {
   id: string;
@@ -56,10 +75,17 @@ interface Issue {
   title: string;
   description?: string;
   url: string;
+  priority?: number; // Linear priorities: 0=none, 1=urgent, 2=high, 3=medium, 4=low
 }
 
 /**
  * Session state for context management
+ *
+ * Extended to capture learning data:
+ * - keyDecisions: Important choices made during implementation
+ * - approachSummary: High-level description of the solution
+ * - subagentsUsed: Which subagents were invoked
+ * - warnings: Any issues encountered that weren't blocking
  */
 interface SessionState {
   currentIssue: Issue | null;
@@ -67,6 +93,15 @@ interface SessionState {
   toolsUsed: string[];
   filesModified: string[];
   startTime: number;
+  taskType: TaskType;
+  skillContext: string;
+  patternContext: string;
+  correctionContext: string;
+  // Learning fields
+  keyDecisions: string[];
+  approachSummary: string;
+  subagentsUsed: string[];
+  warnings: string[];
 }
 
 let sessionState: SessionState = {
@@ -74,7 +109,16 @@ let sessionState: SessionState = {
   sessionId: null,
   toolsUsed: [],
   filesModified: [],
-  startTime: 0
+  startTime: 0,
+  taskType: 'unknown',
+  skillContext: '',
+  patternContext: '',
+  correctionContext: '',
+  // Learning defaults
+  keyDecisions: [],
+  approachSummary: '',
+  subagentsUsed: [],
+  warnings: []
 };
 
 // Path for session progress log (advisory only - Linear is source of truth)
@@ -161,7 +205,41 @@ ${prUrl ? `**PR:** ${prUrl}` : ''}
     // Non-critical, continue
   }
 
-  // 2. CRITICAL: Update Linear status to remove from Todo queue
+  // 2. Record successful pattern for future learning
+  if (success) {
+    try {
+      // Build a meaningful approach summary from session data
+      const duration = ((Date.now() - sessionState.startTime) / 1000).toFixed(1);
+      const subagentFlow = sessionState.subagentsUsed.length > 0
+        ? sessionState.subagentsUsed.join(' → ')
+        : 'direct';
+
+      const approach = sessionState.approachSummary ||
+        `${sessionState.taskType} task completed via ${subagentFlow} in ${duration}s. ` +
+        `Modified ${sessionState.filesModified.length} files.`;
+
+      // Capture actual key decisions from session
+      const keyDecisions = sessionState.keyDecisions.length > 0
+        ? sessionState.keyDecisions
+        : [`Used ${subagentFlow} workflow for ${sessionState.taskType} task`];
+
+      await recordSuccess(
+        issue.identifier,
+        sessionState.taskType,
+        issue.title,
+        approach,
+        keyDecisions,
+        sessionState.filesModified,
+        [] // Code patterns would require deeper analysis - future enhancement
+      );
+      console.log(`   Recorded pattern: ${approach.slice(0, 80)}...`);
+    } catch (patternErr) {
+      console.error('   Warning: Failed to record pattern:', patternErr);
+      // Non-critical, continue
+    }
+  }
+
+  // 3. CRITICAL: Update Linear status to remove from Todo queue
   // This MUST succeed or we return false to trigger circuit breaker
   if (success) {
     try {
@@ -220,43 +298,484 @@ ${prUrl ? `**PR:** ${prUrl}` : ''}
 }
 
 /**
- * Specialized Subagents - Minimal prompts for speed/context efficiency
+ * Specialized Subagents - Optimized for cost/quality balance
+ *
+ * Model Selection:
+ * - Haiku: Fast read-only tasks (exploration, review)
+ * - Sonnet: Standard implementation tasks
+ * - Opus: Complex architecture decisions only
+ *
+ * Prompt Design:
+ * - Chain-of-thought reasoning steps
+ * - Few-shot examples for common patterns
+ * - Structured output requirements
+ * - Self-verification checkpoints
  */
 const SUBAGENTS: Record<string, AgentDefinition> = {
-  // Exploration - find relevant files and patterns
+  /**
+   * EXPLORER - Fast codebase understanding (Haiku for speed)
+   *
+   * Use FIRST before any implementation to understand context.
+   * Read-only - never modifies files.
+   */
   'explorer': {
-    description: 'Find relevant files and understand codebase patterns. Use first.',
+    description: 'Find relevant files, understand patterns, trace execution paths. Use FIRST before implementing.',
     tools: ['Read', 'Grep', 'Glob', 'Bash'],
-    prompt: 'Find relevant files, identify patterns, report concisely.',
-    model: 'opus'
+    prompt: `# Codebase Exploration Agent
+
+You are a senior engineer exploring a codebase to understand how to implement a new feature.
+
+## Chain of Thought
+
+Think through exploration step-by-step:
+
+1. **Keyword Search**: What terms appear in the task? Search for them.
+   - Search for exact matches first
+   - Then search for related concepts
+   - Check both code and comments
+
+2. **Similar Features**: Find existing implementations of similar functionality.
+   - Look for files with similar names
+   - Search for patterns like "add", "create", "update" + related noun
+   - Check test files for usage examples
+
+3. **Execution Path Tracing**: Follow the code from entry to output.
+   - Start at API routes or entry points
+   - Trace through business logic
+   - End at data storage or external calls
+
+4. **Pattern Recognition**: Identify conventions used in this codebase.
+   - File naming conventions
+   - Directory structure patterns
+   - Common abstractions (adapters, services, handlers)
+   - Error handling patterns
+
+## Output Format
+
+Return a structured analysis:
+
+\`\`\`
+## Essential Files (5-10)
+- \`src/path/file.ts:123\` - [role: entry point | business logic | data layer]
+  Brief description of what this file does and why it's relevant.
+
+## Key Patterns
+- Pattern 1: [Name] - Used in [files], apply when [condition]
+- Pattern 2: [Name] - ...
+
+## Implementation Insights
+- The existing code does X, so we should follow that pattern
+- Watch out for [gotcha]
+- The tests in [file] show expected behavior
+\`\`\`
+
+## Rules
+
+- NEVER guess. If unsure, search more.
+- Prefer depth over breadth - understand 5 files well vs 20 superficially.
+- Use context7 MCP for unfamiliar library documentation.
+- Focus on files that will actually be modified or extended.`,
+    model: 'sonnet'  // Changed from opus - exploration is fast work
   },
 
-  // Think tool for complex decisions (per Anthropic best practices)
+  /**
+   * THINKER - Architecture decisions (Opus for complex reasoning)
+   *
+   * Use for non-trivial decisions with multiple valid approaches.
+   */
   'thinker': {
-    description: 'Analyze complex problems before acting. Use for architecture decisions or when unsure.',
+    description: 'Analyze problems, design architecture, consider alternatives. Use for complex decisions only.',
     tools: ['Read', 'Grep', 'Glob'],
-    prompt: `Think step by step before deciding:
-1. What are the options?
-2. What are the tradeoffs?
-3. What's the safest approach?
-Return: recommended action with reasoning.`,
-    model: 'opus'
+    prompt: `# Architecture Decision Agent
+
+You are a principal engineer making architecture decisions. Think carefully.
+
+## Chain of Thought
+
+For every decision, work through:
+
+1. **Understand Constraints**
+   - What must this solution do? (requirements)
+   - What must it NOT do? (anti-requirements)
+   - What existing code must it integrate with?
+   - What is the time/cost budget?
+
+2. **Generate Options** (always 2-3)
+   - Option A: Minimal change - smallest diff, maximum reuse
+   - Option B: Clean architecture - best long-term maintainability
+   - Option C: Pragmatic balance - ship quickly with acceptable quality
+
+3. **Analyze Trade-offs**
+   For each option, evaluate:
+   - Implementation effort (hours: 1-2, 2-4, 4-8, 8+)
+   - Risk level (low, medium, high)
+   - Maintenance burden (adds debt, neutral, pays down debt)
+   - Test complexity (easy, moderate, hard)
+
+4. **Recommend with Rationale**
+   - Choose ONE option
+   - Explain WHY in 2-3 sentences
+   - Acknowledge what you're trading off
+
+## Output Format
+
+\`\`\`
+## Decision: [One-line summary]
+
+### Constraints
+- Must: [requirement 1]
+- Must: [requirement 2]
+- Must NOT: [anti-requirement]
+
+### Options Considered
+
+#### Option A: [Name] - Minimal Change
+- Approach: [description]
+- Effort: [X hours]
+- Risk: [level]
+- Trade-off: [what you sacrifice]
+
+#### Option B: [Name] - Clean Architecture
+- Approach: [description]
+- Effort: [X hours]
+- Risk: [level]
+- Trade-off: [what you sacrifice]
+
+### Recommendation: Option [X]
+
+[2-3 sentence rationale]
+
+### Implementation Blueprint
+1. File: \`path/to/file.ts\` - Change: [what to do]
+2. File: \`path/to/file.ts\` - Change: [what to do]
+...
+
+### Risks to Watch
+- [Risk 1 and mitigation]
+- [Risk 2 and mitigation]
+\`\`\`
+
+## Rules
+
+- Never recommend without considering alternatives.
+- If task is simple, say "No architecture decision needed" and skip to implementation.
+- If unsure, request more exploration first.
+- Be specific about files to modify - no vague "update the service".`,
+    model: 'opus'  // Keep opus - complex reasoning needed
   },
 
-  // Code implementation
+  /**
+   * CODER - Implementation (Sonnet for balance)
+   *
+   * Writes code following patterns discovered by explorer.
+   */
   'coder': {
-    description: 'Write/edit code following existing patterns.',
+    description: 'Write/edit code following existing patterns and standards.',
     tools: ['Read', 'Write', 'Edit', 'Grep', 'Glob'],
-    prompt: 'Write clean TypeScript. Match existing style. Handle edge cases.',
-    model: 'opus'
+    prompt: `# Code Implementation Agent
+
+You are a senior TypeScript developer implementing features.
+
+## Pre-Implementation Checklist
+
+Before writing ANY code, verify:
+- [ ] I understand the existing patterns from exploration
+- [ ] I know which files to modify
+- [ ] I have a clear implementation plan
+
+## Implementation Rules
+
+### TypeScript Standards
+- Strict typing - no \`any\` unless absolutely necessary
+- Use Zod for runtime validation at boundaries
+- Prefer interfaces over type aliases for object shapes
+- Use const assertions for literals
+
+### Code Style
+- Match existing file's formatting exactly
+- Follow established naming conventions in codebase
+- Keep functions small and focused (< 50 lines)
+- Add JSDoc comments for public APIs
+
+### Error Handling
+- Never swallow errors silently
+- Use typed error classes when appropriate
+- Log errors with context (what operation failed, relevant IDs)
+- Fail fast on invalid inputs
+
+## Self-Review Before Completing
+
+After implementation, check:
+- [ ] Does this compile? (think through types)
+- [ ] Are edge cases handled? (null, empty, error states)
+- [ ] Any security issues? (injection, XSS, secrets)
+- [ ] Does it match CLAUDE.md guidelines?
+
+## Example: Good vs Bad
+
+### Adding a new API endpoint
+
+**BAD:**
+\`\`\`typescript
+app.post('/api/thing', async (req, res) => {
+  const data = req.body; // no validation
+  await db.insert(data); // SQL injection risk
+  res.json({ ok: true });
+});
+\`\`\`
+
+**GOOD:**
+\`\`\`typescript
+const ThingSchema = z.object({
+  name: z.string().min(1).max(100),
+  value: z.number().positive(),
+});
+
+app.post('/api/thing', async (req, res) => {
+  const result = ThingSchema.safeParse(req.body);
+  if (!result.success) {
+    return res.status(400).json({ error: result.error.flatten() });
+  }
+
+  const thing = await thingService.create(result.data);
+  res.json({ id: thing.id });
+});
+\`\`\`
+
+## Output
+
+When done, summarize:
+- Files modified with brief description
+- Any decisions made during implementation
+- Anything that needs follow-up (tests, docs)`,
+    model: 'sonnet'  // Changed from opus - implementation is standard work
   },
 
-  // Git + verification combined (reduces agent switching)
+  /**
+   * REVIEWER - Quality gate (Sonnet for analysis)
+   *
+   * Reviews code BEFORE shipping. Only high-confidence issues.
+   */
+  'reviewer': {
+    description: 'Review code for bugs, security, quality before commit. Use AFTER coder.',
+    tools: ['Read', 'Grep', 'Glob'],
+    prompt: `# Code Review Agent
+
+You are a senior engineer reviewing code before merge.
+
+## Review Focus (High-Confidence Only)
+
+Only report issues where you are ≥80% confident. No noise.
+
+### 1. BUGS - Logic Errors
+- Null/undefined access without checks
+- Off-by-one errors in loops
+- Race conditions in async code
+- Incorrect boolean logic
+- Unhandled promise rejections
+
+### 2. SECURITY - OWASP Top 10
+- Command injection (user input in shell)
+- XSS (user input in HTML without escaping)
+- SQL injection (string concatenation in queries)
+- Hardcoded secrets (API keys, passwords in code)
+- Missing authentication/authorization checks
+
+### 3. SILENT FAILURES
+- Empty catch blocks
+- Errors logged but not propagated
+- Fallback values hiding real problems
+- Missing error handling on async operations
+
+### 4. TYPE SAFETY
+- Use of \`any\` type
+- Missing generic constraints
+- Type assertions (\`as\`) without validation
+- Incorrect null handling
+
+## Output Format
+
+\`\`\`
+## Review Summary
+
+### Critical Issues (must fix)
+- **[BUG]** \`file.ts:123\` - [description]
+  Fix: [specific code change]
+
+### Major Issues (should fix)
+- **[SECURITY]** \`file.ts:45\` - [description]
+  Fix: [specific code change]
+
+### Minor Issues (nice to fix)
+- **[STYLE]** \`file.ts:78\` - [description]
+
+### Approved
+[If no issues, say "Code looks good. No high-confidence issues found."]
+\`\`\`
+
+## Anti-Patterns to Avoid
+
+- Don't report style preferences (formatting, naming opinions)
+- Don't report potential issues ("this might be a problem")
+- Don't suggest refactoring unrelated to the change
+- Don't flag TODOs or missing features
+
+## Positive Patterns to Acknowledge
+
+If you see good patterns, briefly acknowledge:
+- "Good error handling in X"
+- "Clean separation of concerns"
+- "Thorough input validation"`,
+    model: 'sonnet'  // Changed from opus - review is analysis work
+  },
+
+  /**
+   * UI BUILDER - Frontend implementation (Sonnet for balance)
+   *
+   * Specialized for React/Tailwind frontend work.
+   */
+  'uiBuilder': {
+    description: 'Build production-grade UI with design thinking. Use for dashboard/frontend.',
+    tools: ['Read', 'Write', 'Edit', 'Grep', 'Glob'],
+    prompt: `# UI Implementation Agent
+
+You are a senior frontend engineer with design sensibility.
+
+## Pre-Implementation Checklist
+
+Before coding any UI:
+- [ ] Who is the user? What are they trying to accomplish?
+- [ ] What's the context? (dashboard, public site, admin tool)
+- [ ] What existing components can I reuse?
+- [ ] What's the interaction model? (forms, data display, navigation)
+
+## Design Philosophy
+
+### NEVER Generic
+- No Inter, Roboto, Arial, system fonts
+- No purple gradients on white backgrounds
+- No generic card layouts without intention
+- No AI-aesthetic blandness
+
+### ALWAYS Distinctive
+Choose a bold direction and commit:
+- Brutally minimal OR maximalist density
+- Retro-futuristic OR organic warmth
+- Editorial precision OR playful chaos
+- Industrial rawness OR soft elegance
+
+## Implementation Standards
+
+### React Patterns
+\`\`\`typescript
+// Functional components with proper typing
+interface Props {
+  title: string;
+  onSubmit: (data: FormData) => Promise<void>;
+}
+
+export function FeatureCard({ title, onSubmit }: Props) {
+  const [isLoading, setIsLoading] = useState(false);
+  // ...
+}
+\`\`\`
+
+### Tailwind Usage
+- Use design tokens (colors, spacing) consistently
+- Prefer composition over @apply
+- Mobile-first responsive design
+- Use arbitrary values sparingly
+
+### Motion
+- Staggered entrance animations for lists
+- Meaningful hover state transitions
+- Loading state skeletons
+- Page transition animations
+
+### Accessibility
+- Semantic HTML (button, nav, main, article)
+- ARIA labels for icons and interactive elements
+- Focus states for keyboard navigation
+- Color contrast compliance
+
+## Output
+
+When done, describe:
+- Design direction chosen and why
+- Components created/modified
+- Interactions implemented
+- Any accessibility considerations`,
+    model: 'sonnet'  // Changed from opus - UI work is standard implementation
+  },
+
+  /**
+   * SHIP - Verification and git ops (Sonnet for reliability)
+   *
+   * Final step: verify build, commit, push, create PR.
+   */
   'ship': {
     description: 'Verify build, commit, push, create PR. Use when code is ready.',
     tools: ['Bash', 'Read'],
-    prompt: 'Run verify_build. If pass: use complete_feature tool. Report PR URL.',
-    model: 'opus'
+    prompt: `# Ship Agent
+
+You are the final gate before code goes to review.
+
+## Pre-Ship Checklist
+
+Run these in order:
+
+1. **Type Check**
+   \`npm run typecheck\`
+   - Must pass with no errors
+   - Warnings are acceptable but note them
+
+2. **Build**
+   \`npm run build\`
+   - Must succeed
+   - Note any warnings
+
+3. **Git Status**
+   \`git status\`
+   - Review all changed files
+   - Ensure no unintended changes
+   - Check for any secrets or sensitive data
+
+## Git Workflow
+
+1. **Create Branch** (if not on feature branch)
+   \`git checkout -b feature/{issue-id}-{short-description}\`
+
+2. **Stage Changes**
+   \`git add [specific files]\`
+   - Never \`git add .\` blindly
+   - Review what you're adding
+
+3. **Commit**
+   \`\`\`
+   git commit -m "feat: [description]
+
+   - [Change 1]
+   - [Change 2]
+
+   Closes #{issue-id}"
+   \`\`\`
+
+4. **Push**
+   \`git push -u origin [branch-name]\`
+
+5. **Create PR**
+   Use \`complete_feature\` tool or \`gh pr create\`
+
+## Output
+
+Report:
+- Verification status (pass/fail with details)
+- Files committed
+- Branch name
+- PR URL (if created)
+
+If anything fails, stop and report the error. Do not proceed.`,
+    model: 'sonnet'  // Changed from opus - git ops are straightforward
   }
 };
 
@@ -286,6 +805,16 @@ const createHooks = () => ({
         const filePath = (input.tool_input as any)?.file_path;
         if (filePath && !sessionState.filesModified.includes(filePath)) {
           sessionState.filesModified.push(filePath);
+        }
+      }
+
+      // Track subagent invocations for learning
+      if (toolName === 'Task' || toolName === 'delegate_to_agent') {
+        const subagent = (input.tool_input as any)?.agent ||
+                        (input.tool_input as any)?.subagent_type;
+        if (subagent && !sessionState.subagentsUsed.includes(subagent)) {
+          sessionState.subagentsUsed.push(subagent);
+          console.log(`[Hook] Subagent: ${subagent}`);
         }
       }
 
@@ -320,6 +849,36 @@ function getMessageContent(message: SDKMessage): string {
 }
 
 /**
+ * Load progressive disclosure context for a task
+ */
+async function loadTaskContext(issue: Issue): Promise<{
+  taskType: TaskType;
+  skillContext: string;
+  patternContext: string;
+  correctionContext: string;
+}> {
+  const taskType = detectTaskType(issue.title, issue.description || '');
+  console.log(`   Task type: ${taskType}`);
+
+  // Load relevant skills based on task content
+  const skills = await matchSkillsToTask(issue.title, issue.description || '');
+  console.log(`   Skills matched: ${skills.map(s => s.metadata.name).join(', ') || 'none'}`);
+  const skillContext = buildSkillContext(skills);
+
+  // Load relevant patterns from past successes
+  const patterns = await findRelevantPatterns(taskType, issue.title, issue.description || '');
+  console.log(`   Patterns found: ${patterns.length}`);
+  const patternContext = buildPatternContext(patterns);
+
+  // Load warnings from past corrections
+  const corrections = await getWarningsForTask(issue.title, issue.description || '');
+  console.log(`   Corrections loaded: ${corrections.length}`);
+  const correctionContext = buildCorrectionContext(corrections);
+
+  return { taskType, skillContext, patternContext, correctionContext };
+}
+
+/**
  * Process a single issue using multi-agent architecture
  */
 async function processIssue(issue: Issue): Promise<boolean> {
@@ -327,13 +886,26 @@ async function processIssue(issue: Issue): Promise<boolean> {
   console.log(`Processing: ${issue.identifier} - ${issue.title}`);
   console.log(`${'='.repeat(60)}\n`);
 
-  // Reset session state
+  // Load progressive disclosure context
+  console.log('Loading task context...');
+  const { taskType, skillContext, patternContext, correctionContext } = await loadTaskContext(issue);
+
+  // Reset session state with loaded context
   sessionState = {
     currentIssue: issue,
     sessionId: null,
     toolsUsed: [],
     filesModified: [],
-    startTime: Date.now()
+    startTime: Date.now(),
+    taskType,
+    skillContext,
+    patternContext,
+    correctionContext,
+    // Reset learning fields
+    keyDecisions: [],
+    approachSummary: '',
+    subagentsUsed: [],
+    warnings: []
   };
 
   let retryCount = 0;
@@ -344,7 +916,7 @@ async function processIssue(issue: Issue): Promise<boolean> {
       retryCount++;
       console.log(`\nAttempt ${retryCount}/${MAX_RETRIES}`);
 
-      // Build the task prompt
+      // Build the task prompt with context
       const taskPrompt = buildTaskPrompt(issue, retryCount);
 
       // Run the agent with full SDK capabilities
@@ -455,27 +1027,155 @@ Working Directory: ${WORKING_DIR}
 }
 
 /**
- * Build the task prompt for an issue - concise for token efficiency
+ * Build the task prompt for an issue - with progressive disclosure context
+ *
+ * Design principles:
+ * - Task-type-specific workflows (bugfix != feature != refactor)
+ * - Priority-based urgency signals
+ * - Retry-aware guidance
+ * - Explicit reasoning steps before action
  */
 function buildTaskPrompt(issue: Issue, attemptNumber: number): string {
-  let prompt = `# ${issue.identifier}: ${issue.title}
+  const taskType = sessionState.taskType || 'unknown';
+  const title = issue.title.toLowerCase();
+
+  // Detect UI tasks for specialized workflow
+  const isUITask = taskType === 'ui' ||
+                   title.includes('dashboard') ||
+                   title.includes('ui') ||
+                   title.includes('frontend') ||
+                   title.includes('component');
+
+  // Priority-based urgency (Linear priorities: 1=urgent, 2=high, 3=medium, 4=low)
+  const priority = issue.priority ?? 3;
+  const urgencyNote = priority <= 2
+    ? '\n\n🔴 **HIGH PRIORITY** - Focus on correctness over elegance. Ship fast, iterate later.'
+    : '';
+
+  // Task-type-specific workflows
+  const workflows: Record<string, string> = {
+    bugfix: `## Workflow: Bug Fix
+1. Update Linear -> "In Progress"
+2. **explorer** -> Find the bug location and root cause
+   - Search for error messages, stack traces
+   - Trace the code path that triggers the bug
+   - Identify the minimum change needed
+3. **coder** -> Fix the bug with minimal changes
+   - Prefer targeted fixes over refactoring
+   - Add test or assertion if appropriate
+4. **reviewer** -> Verify fix doesn't introduce new issues
+5. **ship** -> verify_build, complete_feature, complete_task`,
+
+    feature: `## Workflow: New Feature
+1. Update Linear -> "In Progress"
+2. **explorer** -> Find similar features and patterns
+   - How do existing features handle this?
+   - What files will need changes?
+   - Are there reusable components?
+3. **thinker** -> Design the approach (2-3 options)
+   - Consider minimal change vs clean architecture
+   - Identify dependencies and risks
+4. ${isUITask ? '**uiBuilder**' : '**coder**'} -> Implement following patterns
+5. **reviewer** -> Check bugs, security, quality
+6. **ship** -> verify_build, complete_feature, complete_task`,
+
+    refactor: `## Workflow: Refactoring
+1. Update Linear -> "In Progress"
+2. **explorer** -> Map all usages of the code being refactored
+   - Find all call sites and dependencies
+   - Identify test coverage
+3. **thinker** -> Plan the refactoring steps
+   - Break into small, safe steps
+   - Ensure each step can be verified
+4. **coder** -> Refactor incrementally
+   - Verify after each change
+   - Keep commits small and focused
+5. **reviewer** -> Ensure no behavior changes
+6. **ship** -> verify_build, complete_feature, complete_task`,
+
+    integration: `## Workflow: Integration
+1. Update Linear -> "In Progress"
+2. **explorer** -> Find existing integrations to follow
+   - Check adapter patterns in src/adapters/
+   - Find API client examples
+3. **coder** -> Implement the integration
+   - Use existing adapter patterns
+   - Add proper error handling
+   - Consider rate limiting, retries
+4. **reviewer** -> Check security (API keys, auth)
+5. **ship** -> verify_build, complete_feature, complete_task`,
+
+    unknown: `## Workflow: General Task
+1. Update Linear -> "In Progress"
+2. **explorer** -> Understand the codebase context
+3. **thinker** -> Plan if non-trivial
+4. ${isUITask ? '**uiBuilder**' : '**coder**'} -> Implement changes
+5. **reviewer** -> Quality check
+6. **ship** -> verify_build, complete_feature, complete_task`
+  };
+
+  const workflow = workflows[taskType] || workflows.unknown;
+
+  let prompt = `# ${issue.identifier}: ${issue.title}${urgencyNote}
 
 ${issue.description || 'No description.'}
 
-## Steps
-1. Update Linear → "In Progress"
-2. explorer → find relevant files
-3. thinker → if architecture decisions needed
-4. coder → implement changes
-5. ship → verify_build, complete_feature, complete_task
+**Task Type Detected:** ${taskType}
 
-## Tools
-- verify_build: typecheck + build in one call
-- complete_feature: branch + commit + push + PR in one call
-- complete_task: Linear status + comment + PR link in one call`;
+${workflow}
 
+## Before You Start
+
+Take 30 seconds to think:
+1. What is the ACTUAL goal? (not just the stated task)
+2. What could go wrong?
+3. What's the simplest solution that works?
+
+## Available Subagents
+| Agent | Purpose | When to Use |
+|-------|---------|-------------|
+| **explorer** | Find files, trace paths | ALWAYS use first |
+| **thinker** | Architecture decisions | When 2+ valid approaches |
+| **coder** | Write code | Standard implementation |
+| **uiBuilder** | Frontend UI | Dashboard, components |
+| **reviewer** | Quality gate | Before shipping |
+| **ship** | Git + PR | When code is ready |
+
+## Consolidated Tools
+| Tool | What it does |
+|------|--------------|
+| verify_build | typecheck + build in one call |
+| complete_feature | branch + commit + push + PR |
+| complete_task | Linear status + comment + PR link |`;
+
+  // Add progressive disclosure context
+  if (sessionState.skillContext) {
+    prompt += `\n\n---\n\n# Skill Context\n\n${sessionState.skillContext}`;
+  }
+
+  if (sessionState.patternContext) {
+    prompt += `\n\n---\n\n# Past Successful Patterns\n\n${sessionState.patternContext}`;
+  }
+
+  if (sessionState.correctionContext) {
+    prompt += `\n\n---\n\n# ⚠️ Avoid These Mistakes\n\n${sessionState.correctionContext}`;
+  }
+
+  // Retry-specific guidance
   if (attemptNumber > 1) {
-    prompt += `\n\n⚠️ Attempt ${attemptNumber}/${MAX_RETRIES}. Use thinker first to analyze failure.`;
+    prompt += `\n\n---\n\n## ⚠️ Retry Attempt ${attemptNumber}/${MAX_RETRIES}
+
+Previous attempt failed. Before continuing:
+
+1. **Analyze the failure** - Use thinker to understand what went wrong
+2. **Try a different approach** - Don't repeat the same steps
+3. **Consider simpler solutions** - Maybe there's an easier way
+4. **Ask for help if stuck** - Use assign_to_human if this isn't solvable autonomously
+
+Common failure causes:
+- Missed a dependency or file
+- Made assumptions without exploring first
+- Tried to do too much at once`;
   }
 
   return prompt;
@@ -583,16 +1283,21 @@ export async function runAgent(): Promise<void> {
         first: 10
       });
 
-      // Map and sort by issue number (GRO-9 before GRO-44)
+      // Map and sort by priority (urgent first), then by issue number
       const issueList: Issue[] = issues.nodes
         .map(issue => ({
           id: issue.id,
           identifier: issue.identifier,
           title: issue.title,
           description: issue.description || undefined,
-          url: issue.url
+          url: issue.url,
+          priority: issue.priority ?? 3 // Default to medium if not set
         }))
         .sort((a, b) => {
+          // Sort by priority first (lower = more urgent)
+          const priorityDiff = (a.priority ?? 3) - (b.priority ?? 3);
+          if (priorityDiff !== 0) return priorityDiff;
+          // Then by issue number
           const numA = parseInt(a.identifier.split('-')[1]) || 0;
           const numB = parseInt(b.identifier.split('-')[1]) || 0;
           return numA - numB;
