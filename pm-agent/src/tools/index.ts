@@ -1,36 +1,16 @@
 /**
  * Tool Registry
- * Central registry for all agent tools
+ *
+ * With Claude Agent SDK, tools are handled differently:
+ * - File operations: Built-in (Read, Glob, Grep, Bash)
+ * - Linear operations: MCP server (see linear-mcp.ts)
+ *
+ * This file re-exports utilities for backwards compatibility.
  */
 
-import type Anthropic from '@anthropic-ai/sdk';
-import { linearTools, executeLinearTool, initializeLinear } from './linear.js';
+// Linear MCP server and client initialization
+export { initializeLinearClient, createLinearMcpServer } from './linear-mcp.js';
 
-// Re-export Linear tools
-export { initializeLinear } from './linear.js';
-
-// All available tools
-export const allTools: Anthropic.Tool[] = [...linearTools];
-
-// Tool categories for selective loading
-export const toolCategories = {
-  linear: linearTools,
-} as const;
-
-// Execute any registered tool
-export async function executeTool(
-  toolName: string,
-  input: Record<string, unknown>
-): Promise<string> {
-  // Route to appropriate executor
-  if (toolName.startsWith('linear_')) {
-    return executeLinearTool(toolName, input);
-  }
-
-  return JSON.stringify({ success: false, error: `Unknown tool: ${toolName}` });
-}
-
-// Get tools by category
-export function getToolsByCategory(categories: (keyof typeof toolCategories)[]): Anthropic.Tool[] {
-  return categories.flatMap(cat => toolCategories[cat]);
-}
+// Working directory is now managed in agent.ts
+// Re-export for any code that still references this module
+export { setWorkingDirectory, getWorkingDirectory } from '../agent.js';

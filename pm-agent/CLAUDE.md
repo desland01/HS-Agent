@@ -1,6 +1,6 @@
 # PM Agent
 
-Local Project Management Agent powered by Claude.
+Local Project Management Agent powered by Claude with Claude Code-like CLI experience.
 
 ## Quick Start
 
@@ -8,25 +8,37 @@ Local Project Management Agent powered by Claude.
 # Install dependencies
 npm install
 
-# Set environment variables
-export ANTHROPIC_API_KEY=your-key
-export LINEAR_API_KEY=your-linear-key
+# Set environment variables (API key optional with Claude Max subscription)
+export ANTHROPIC_API_KEY=your-key  # Optional with Max subscription
+export LINEAR_API_KEY=your-linear-key  # Optional
 
 # Run the agent
 npm run dev
 ```
+
+## Features
+
+- **Streaming responses** - Real-time output as Claude thinks
+- **File operations** - Read, search, and explore local files
+- **Linear integration** - Create/update issues, track progress
+- **Sub-agent delegation** - Specialized agents for complex tasks
+- **Tool feedback** - Visual indicators for tool use
 
 ## Architecture
 
 ```
 pm-agent/
 ├── src/
-│   ├── index.ts          # CLI entry point
+│   ├── index.ts          # Claude Code-like CLI with streaming
 │   ├── agent.ts          # Main PM agent with sub-agent orchestration
 │   ├── skills/           # Skill loader with progressive disclosure
-│   └── tools/            # Linear API tools
-├── skills/               # Skill definitions (SKILL.md files)
-├── agents/               # Sub-agent system prompts
+│   └── tools/
+│       ├── index.ts      # Tool registry
+│       ├── files.ts      # File operations (read, glob, grep)
+│       └── linear.ts     # Linear API tools
+├── .claude/
+│   ├── skills/           # Skill definitions (SKILL.md files)
+│   └── agents/           # Sub-agent system prompts
 └── CLAUDE.md             # This file
 ```
 
@@ -65,11 +77,33 @@ The agent can:
 
 ## CLI Commands
 
-- `/clear` - Reset conversation
-- `/help` - Show help
-- `/skills` - List skills
-- `/agents` - List sub-agents
-- `/quit` - Exit
+| Command | Description |
+|---------|-------------|
+| `/clear` | Clear conversation history |
+| `/help` | Show help and examples |
+| `/tools` | List available tools |
+| `/skills` | List available skills |
+| `/agents` | List sub-agents |
+| `/cwd` | Show working directory |
+| `/quit` | Exit the agent |
+
+## File Tools
+
+The agent can read and search files in the working directory:
+
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file contents with line numbers |
+| `list_directory` | List directory contents (supports recursion) |
+| `glob_files` | Find files matching pattern (e.g., `**/*.ts`) |
+| `grep_content` | Search for pattern in files |
+| `get_file_info` | Get file metadata |
+
+Example prompts:
+- "Show me the contents of package.json"
+- "Find all TypeScript files in src/"
+- "Search for TODO comments"
+- "What files are in this directory?"
 
 ## Development
 

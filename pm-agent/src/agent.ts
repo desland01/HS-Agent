@@ -1,14 +1,14 @@
 /**
  * PM Agent with Sub-Agent Orchestration
- * Main agent that coordinates specialized sub-agents for PM tasks
+ * Built with Claude Agent SDK for proper tool handling and streaming
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { query, type Options, type SDKMessage, type AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
+import type { ContentBlock, TextBlock, ToolUseBlock } from '@anthropic-ai/sdk/resources/messages';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { allTools, executeTool } from './tools/index.js';
-import { generateSkillsSummary, skillTools, executeSkillTool } from './skills/index.js';
+import { createLinearMcpServer } from './tools/linear-mcp.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // SDK standard location: .claude/agents/
@@ -25,15 +25,10 @@ export type ModelType = keyof typeof MODELS;
 
 interface SubAgentConfig {
   name: string;
-  model: ModelType;
+  model: 'opus' | 'sonnet' | 'haiku';
   systemPromptPath: string;
   description: string;
-}
-
-interface SubAgentResult {
-  agent: string;
-  response: string;
-  toolCalls?: { tool: string; result: string }[];
+  tools: string[];
 }
 
 const SUB_AGENTS: SubAgentConfig[] = [
@@ -41,40 +36,46 @@ const SUB_AGENTS: SubAgentConfig[] = [
     name: 'planning',
     model: 'opus',
     systemPromptPath: 'planning-agent.md',
-    description: 'Breaks down features into Linear issues with estimates',
+    description: 'Breaks down features into Linear issues with estimates. Use for complex feature planning and sprint organization.',
+    tools: ['Read', 'Glob', 'Grep', 'mcp__linear__linear_create_issue', 'mcp__linear__linear_list_issues'],
   },
   {
     name: 'design-review',
     model: 'sonnet',
     systemPromptPath: 'design-review-agent.md',
-    description: 'Reviews UI/UX decisions and provides feedback',
+    description: 'Reviews UI/UX decisions and provides feedback on design consistency and accessibility.',
+    tools: ['Read', 'Glob', 'Grep'],
   },
   {
     name: 'qa',
     model: 'sonnet',
     systemPromptPath: 'qa-agent.md',
-    description: 'Reviews security, test coverage, and code quality',
+    description: 'Reviews security, test coverage, and code quality. Use for security audits and QA reviews.',
+    tools: ['Read', 'Glob', 'Grep', 'Bash'],
   },
   {
     name: 'linear-coordinator',
     model: 'haiku',
     systemPromptPath: 'linear-coordinator.md',
-    description: 'Tracks progress and updates Linear issues',
+    description: 'Tracks progress and updates Linear issues. Use for quick status checks and issue updates.',
+    tools: ['mcp__linear__linear_list_issues', 'mcp__linear__linear_update_issue', 'mcp__linear__linear_get_view_issues'],
   },
 ];
 
-export class PMAgent {
-  private client: Anthropic;
-  private conversationHistory: Anthropic.MessageParam[] = [];
+function getSubAgentSystemPrompt(agentName: string): string | null {
+  const config = SUB_AGENTS.find(a => a.name === agentName);
+  if (!config) return null;
 
-  constructor() {
-    this.client = new Anthropic();
+  const promptPath = join(AGENTS_DIR, config.systemPromptPath);
+  if (!existsSync(promptPath)) {
+    return null;
   }
 
-  private buildSystemPrompt(): string {
-    const skillsSummary = generateSkillsSummary();
+  return readFileSync(promptPath, 'utf-8');
+}
 
-    return `# PM Agent
+function buildSystemPrompt(): string {
+  return `# PM Agent
 
 You are an expert Project Manager for software development. You think strategically, anticipate blockers, and drive projects to completion. You don't just respond to requests—you proactively surface risks, suggest next steps, and keep work moving.
 
@@ -117,8 +118,6 @@ REQUEST RECEIVED
 | **design-review** | UI changes, UX decisions, accessibility | Sonnet | Review mockups, check consistency, accessibility audit |
 | **qa** | Before shipping, security concerns, test gaps | Sonnet | Security review, test coverage, code quality |
 | **linear-coordinator** | Quick checks, updates, status reports | Haiku | "What's blocked?", "Update issue X", progress summaries |
-
-**Delegation syntax**: Use \`delegate_to_agent\` tool with clear, specific tasks.
 
 ## PM Workflow Patterns
 
@@ -177,8 +176,6 @@ For substantial responses, use this format:
 
 For quick responses, skip the structure—be conversational.
 
-${skillsSummary}
-
 ## Constitutional Principles
 
 Before finalizing any response, verify:
@@ -194,233 +191,233 @@ Before finalizing any response, verify:
 - **Don't over-delegate simple questions** (answer directly)
 - **Don't ignore context from earlier in conversation**
 - **Don't give vague answers** ("it depends" → give options instead)
-- **Don't wait to be asked about blockers** (surface them proactively)
-`;
-  }
+- **Don't wait to be asked about blockers** (surface them proactively)`;
+}
 
-  private getSubAgentSystemPrompt(agentName: string): string | null {
-    const config = SUB_AGENTS.find(a => a.name === agentName);
-    if (!config) return null;
+function buildAgentsConfig(): Record<string, AgentDefinition> {
+  const agents: Record<string, AgentDefinition> = {};
 
-    const promptPath = join(AGENTS_DIR, config.systemPromptPath);
-    if (!existsSync(promptPath)) {
-      return null;
-    }
-
-    return readFileSync(promptPath, 'utf-8');
-  }
-
-  private getAgentTools(): Anthropic.Tool[] {
-    return [
-      ...allTools,
-      ...skillTools,
-      {
-        name: 'delegate_to_agent',
-        description: 'Delegate a task to a specialized sub-agent. Use for complex tasks that benefit from specialized expertise.',
-        input_schema: {
-          type: 'object' as const,
-          properties: {
-            agent: {
-              type: 'string',
-              enum: SUB_AGENTS.map(a => a.name),
-              description: 'The sub-agent to delegate to',
-            },
-            task: {
-              type: 'string',
-              description: 'The task description to send to the sub-agent',
-            },
-            context: {
-              type: 'string',
-              description: 'Additional context for the sub-agent',
-            },
-          },
-          required: ['agent', 'task'],
-        },
-      },
-    ];
-  }
-
-  private async executeSubAgent(
-    agentName: string,
-    task: string,
-    context?: string
-  ): Promise<SubAgentResult> {
-    const config = SUB_AGENTS.find(a => a.name === agentName);
-    if (!config) {
-      return {
-        agent: agentName,
-        response: `Unknown agent: ${agentName}`,
+  for (const config of SUB_AGENTS) {
+    const systemPrompt = getSubAgentSystemPrompt(config.name);
+    if (systemPrompt) {
+      agents[config.name] = {
+        description: config.description,
+        prompt: systemPrompt,
+        tools: config.tools,
+        model: config.model,
       };
     }
+  }
 
-    const systemPrompt = this.getSubAgentSystemPrompt(agentName);
-    if (!systemPrompt) {
-      return {
-        agent: agentName,
-        response: `Failed to load agent configuration for: ${agentName}`,
-      };
-    }
+  return agents;
+}
 
-    const messages: Anthropic.MessageParam[] = [
-      {
-        role: 'user',
-        content: context
-          ? `Context:\n${context}\n\nTask:\n${task}`
-          : task,
-      },
-    ];
+// Working directory for file operations
+let workingDirectory = process.cwd();
 
-    const toolCalls: { tool: string; result: string }[] = [];
-    let response = '';
+export function setWorkingDirectory(dir: string): void {
+  workingDirectory = dir;
+}
 
-    // Run sub-agent with tool loop
-    let continueLoop = true;
-    while (continueLoop) {
-      const result = await this.client.messages.create({
-        model: MODELS[config.model],
-        max_tokens: 4096,
-        system: systemPrompt,
-        tools: [...allTools, ...skillTools],
-        messages,
-      });
+export function getWorkingDirectory(): string {
+  return workingDirectory;
+}
 
-      // Process response
-      for (const block of result.content) {
-        if (block.type === 'text') {
-          response += block.text;
-        } else if (block.type === 'tool_use') {
-          // Execute tool
-          let toolResult: string;
-          if (block.name.startsWith('linear_')) {
-            toolResult = await executeTool(block.name, block.input as Record<string, unknown>);
-          } else if (block.name === 'load_skill') {
-            toolResult = executeSkillTool(block.name, block.input as Record<string, unknown>);
-          } else {
-            toolResult = JSON.stringify({ error: `Unknown tool: ${block.name}` });
+/**
+ * Message types emitted during streaming
+ */
+export type PMAgentMessage =
+  | { type: 'text'; content: string }
+  | { type: 'tool_start'; toolName: string; input: Record<string, unknown> }
+  | { type: 'tool_end'; toolName: string; result: string }
+  | { type: 'thinking'; status: string }
+  | { type: 'subagent_start'; agentName: string }
+  | { type: 'subagent_end'; agentName: string }
+  | { type: 'error'; error: string };
+
+/**
+ * Extract text content from SDK message content blocks
+ */
+function extractTextFromContent(content: ContentBlock[]): string {
+  return content
+    .filter((block): block is TextBlock => block.type === 'text')
+    .map(block => block.text)
+    .join('');
+}
+
+/**
+ * Streaming PM Agent using Claude Agent SDK
+ */
+export async function* streamPMAgent(
+  userMessage: string,
+  sessionId?: string
+): AsyncGenerator<PMAgentMessage, string, undefined> {
+  // Create Linear MCP server
+  const linearServer = createLinearMcpServer();
+
+  // Build query options
+  const options: Options = {
+    model: MODELS.sonnet,
+    cwd: workingDirectory,
+    // Register Linear MCP server
+    mcpServers: {
+      linear: linearServer,
+    },
+    // Register subagents
+    agents: buildAgentsConfig(),
+    // Allow all built-in tools plus Linear tools
+    allowedTools: [
+      'Read',
+      'Glob',
+      'Grep',
+      'Bash',
+      'Task',
+      'mcp__linear__linear_create_issue',
+      'mcp__linear__linear_update_issue',
+      'mcp__linear__linear_list_issues',
+      'mcp__linear__linear_get_issue',
+      'mcp__linear__linear_search_issues',
+      'mcp__linear__linear_list_teams',
+      'mcp__linear__linear_list_projects',
+      'mcp__linear__linear_get_view_issues',
+    ],
+    // Include streaming events for tool calls
+    includePartialMessages: true,
+    // Resume session if provided
+    ...(sessionId ? { resume: sessionId } : {}),
+  };
+
+  // Prepend system prompt to user message since Options doesn't have systemPrompt
+  const fullPrompt = `${buildSystemPrompt()}\n\n---\n\nUser: ${userMessage}`;
+
+  // Start the query
+  const response = query({
+    prompt: fullPrompt,
+    options,
+  });
+
+  let fullResponse = '';
+  let currentSessionId: string | undefined;
+  const activeToolCalls = new Map<string, string>(); // tool_use_id -> tool_name
+
+  // Process streaming messages
+  for await (const message of response) {
+    switch (message.type) {
+      case 'system':
+        if (message.subtype === 'init') {
+          currentSessionId = message.session_id;
+          yield { type: 'thinking', status: 'Thinking...' };
+        }
+        break;
+
+      case 'assistant':
+        // Extract text from the complete assistant message
+        if (message.message.content) {
+          const text = extractTextFromContent(message.message.content as ContentBlock[]);
+          if (text) {
+            fullResponse += text;
+            yield { type: 'text', content: text };
           }
 
-          toolCalls.push({ tool: block.name, result: toolResult });
-
-          // Add to messages for continuation
-          messages.push({
-            role: 'assistant',
-            content: result.content,
-          });
-          messages.push({
-            role: 'user',
-            content: [
-              {
-                type: 'tool_result',
-                tool_use_id: block.id,
-                content: toolResult,
-              },
-            ],
-          });
+          // Check for tool use blocks to track them
+          for (const block of message.message.content as ContentBlock[]) {
+            if (block.type === 'tool_use') {
+              const toolBlock = block as ToolUseBlock;
+              activeToolCalls.set(toolBlock.id, toolBlock.name);
+            }
+          }
         }
-      }
+        break;
 
-      // Check if we should continue
-      if (result.stop_reason === 'end_turn' || result.stop_reason === 'stop_sequence') {
-        continueLoop = false;
-      } else if (result.stop_reason !== 'tool_use') {
-        continueLoop = false;
-      }
+      case 'stream_event':
+        // Handle streaming events for real-time tool call visibility
+        const event = message.event;
+        if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
+          const toolBlock = event.content_block;
+          activeToolCalls.set(toolBlock.id, toolBlock.name);
+          yield {
+            type: 'tool_start',
+            toolName: toolBlock.name,
+            input: {},
+          };
+        } else if (event.type === 'content_block_stop') {
+          // Tool block completed - we'll get result via 'result' message type
+        }
+        break;
+
+      case 'result':
+        if (message.subtype === 'success') {
+          // Query completed successfully
+        } else {
+          // Error occurred
+          yield {
+            type: 'error',
+            error: message.errors?.join(', ') || 'Query failed',
+          };
+        }
+        break;
+
+      case 'tool_progress':
+        // Tool is still running - could show progress indicator
+        break;
     }
-
-    return {
-      agent: agentName,
-      response,
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-    };
   }
+
+  return fullResponse;
+}
+
+/**
+ * Simple non-streaming chat (for backwards compatibility)
+ */
+export async function chat(userMessage: string, sessionId?: string): Promise<string> {
+  let fullResponse = '';
+
+  for await (const message of streamPMAgent(userMessage, sessionId)) {
+    if (message.type === 'text') {
+      fullResponse += message.content;
+    }
+  }
+
+  return fullResponse;
+}
+
+/**
+ * Create a PM Agent instance with conversation history management
+ * Provides a class-based interface for session management
+ */
+export class PMAgent {
+  private sessionId: string | undefined;
 
   async chat(userMessage: string): Promise<string> {
-    // Add user message to history
-    this.conversationHistory.push({
-      role: 'user',
-      content: userMessage,
-    });
+    let fullResponse = '';
 
-    let response = '';
-    let continueLoop = true;
-
-    while (continueLoop) {
-      const result = await this.client.messages.create({
-        model: MODELS.sonnet,
-        max_tokens: 4096,
-        system: this.buildSystemPrompt(),
-        tools: this.getAgentTools(),
-        messages: this.conversationHistory,
-      });
-
-      const assistantContent: Anthropic.ContentBlock[] = [];
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-      for (const block of result.content) {
-        if (block.type === 'text') {
-          response += block.text;
-          assistantContent.push(block);
-        } else if (block.type === 'tool_use') {
-          assistantContent.push(block);
-
-          // Execute tool
-          let toolResult: string;
-
-          if (block.name === 'delegate_to_agent') {
-            const input = block.input as { agent: string; task: string; context?: string };
-            const subResult = await this.executeSubAgent(
-              input.agent,
-              input.task,
-              input.context
-            );
-            toolResult = JSON.stringify(subResult);
-          } else if (block.name.startsWith('linear_')) {
-            toolResult = await executeTool(block.name, block.input as Record<string, unknown>);
-          } else if (block.name === 'load_skill') {
-            toolResult = executeSkillTool(block.name, block.input as Record<string, unknown>);
-          } else {
-            toolResult = JSON.stringify({ error: `Unknown tool: ${block.name}` });
-          }
-
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: toolResult,
-          });
-        }
-      }
-
-      // Add assistant response to history
-      this.conversationHistory.push({
-        role: 'assistant',
-        content: assistantContent,
-      });
-
-      // If there were tool calls, add results and continue
-      if (toolResults.length > 0) {
-        this.conversationHistory.push({
-          role: 'user',
-          content: toolResults,
-        });
-      }
-
-      // Check if we should continue
-      if (result.stop_reason === 'end_turn' || result.stop_reason === 'stop_sequence') {
-        continueLoop = false;
-      } else if (result.stop_reason !== 'tool_use') {
-        continueLoop = false;
+    for await (const message of streamPMAgent(userMessage, this.sessionId)) {
+      if (message.type === 'text') {
+        fullResponse += message.content;
       }
     }
 
-    return response;
+    return fullResponse;
+  }
+
+  async *streamChat(userMessage: string): AsyncGenerator<PMAgentMessage, string, undefined> {
+    const generator = streamPMAgent(userMessage, this.sessionId);
+
+    for await (const message of generator) {
+      // Capture session ID from init message (handled internally by SDK)
+      yield message;
+    }
+
+    return '';
   }
 
   clearHistory(): void {
-    this.conversationHistory = [];
+    // Start a new session by clearing the session ID
+    this.sessionId = undefined;
   }
 
-  getHistory(): Anthropic.MessageParam[] {
-    return [...this.conversationHistory];
+  getSessionId(): string | undefined {
+    return this.sessionId;
   }
 }
 
