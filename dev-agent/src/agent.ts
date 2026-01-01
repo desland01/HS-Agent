@@ -29,6 +29,8 @@ import { LinearClient } from '@linear/sdk';
 import { linearServer } from './tools/linear.js';
 import { gitServer, setWorkingDirectory as setGitDir } from './tools/git.js';
 import { bashServer, setWorkingDirectory as setBashDir } from './tools/bash.js';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 
 // Configuration
 const MAX_RETRIES = 3;
@@ -75,6 +77,152 @@ let sessionState: SessionState = {
 };
 
 /**
+ * Feature tracking interface (from features.json)
+ */
+interface Feature {
+  id: string;
+  title: string;
+  priority: number;
+  passes: boolean;
+  attempts: number;
+  lastAttempt: string | null;
+  prUrl: string | null;
+  notes: string;
+}
+
+interface FeaturesFile {
+  version: string;
+  description: string;
+  lastUpdated: string | null;
+  features: Feature[];
+}
+
+// Paths for session handoff files
+const FEATURES_PATH = path.join(process.cwd(), 'features.json');
+const PROGRESS_PATH = path.join(process.cwd(), 'claude-progress.txt');
+
+/**
+ * Session Startup Protocol
+ * Per Anthropic best practices: verify state before starting work
+ */
+async function sessionStartup(): Promise<{ features: FeaturesFile | null; progress: string }> {
+  console.log('\n📋 Session Startup Protocol...');
+
+  let features: FeaturesFile | null = null;
+  let progress = '';
+
+  // 1. Read features.json
+  try {
+    const featuresContent = await fs.readFile(FEATURES_PATH, 'utf-8');
+    features = JSON.parse(featuresContent);
+    const incomplete = features!.features.filter(f => !f.passes).length;
+    console.log(`   Features: ${incomplete} incomplete of ${features!.features.length} total`);
+  } catch (err) {
+    console.log('   Features: No features.json found (will sync from Linear)');
+  }
+
+  // 2. Read claude-progress.txt
+  try {
+    progress = await fs.readFile(PROGRESS_PATH, 'utf-8');
+    const sessionCount = (progress.match(/### Session:/g) || []).length;
+    console.log(`   Progress: ${sessionCount} previous sessions logged`);
+  } catch (err) {
+    console.log('   Progress: No progress file found (fresh start)');
+  }
+
+  // 3. Get last few git commits for context
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    const { stdout } = await execAsync('git log -3 --oneline', { cwd: WORKING_DIR });
+    console.log(`   Recent commits:\n${stdout.split('\n').map(l => '     ' + l).join('\n')}`);
+  } catch (err) {
+    console.log('   Git: Could not read commit history');
+  }
+
+  return { features, progress };
+}
+
+/**
+ * Session Handoff Protocol
+ * Per Anthropic best practices: save state for next session
+ */
+async function sessionHandoff(
+  issue: Issue,
+  success: boolean,
+  prUrl?: string
+): Promise<void> {
+  console.log('\n📝 Session Handoff Protocol...');
+  const timestamp = new Date().toISOString();
+
+  // 1. Update features.json
+  try {
+    let features: FeaturesFile;
+    try {
+      const content = await fs.readFile(FEATURES_PATH, 'utf-8');
+      features = JSON.parse(content);
+    } catch {
+      features = {
+        version: '1.0.0',
+        description: 'Structured feature tracking',
+        lastUpdated: null,
+        features: []
+      };
+    }
+
+    // Find or create feature entry
+    let feature = features.features.find(f => f.id === issue.identifier);
+    if (!feature) {
+      feature = {
+        id: issue.identifier,
+        title: issue.title,
+        priority: 1,
+        passes: false,
+        attempts: 0,
+        lastAttempt: null,
+        prUrl: null,
+        notes: ''
+      };
+      features.features.push(feature);
+    }
+
+    // Update feature
+    feature.attempts++;
+    feature.lastAttempt = timestamp;
+    if (success) {
+      feature.passes = true;
+      if (prUrl) feature.prUrl = prUrl;
+    }
+
+    features.lastUpdated = timestamp;
+    await fs.writeFile(FEATURES_PATH, JSON.stringify(features, null, 2));
+    console.log(`   Updated features.json: ${issue.identifier} (passes: ${success})`);
+  } catch (err) {
+    console.error('   Failed to update features.json:', err);
+  }
+
+  // 2. Append to claude-progress.txt
+  try {
+    const entry = `
+### Session: ${timestamp}
+**Issue:** ${issue.identifier} - ${issue.title}
+**Status:** ${success ? 'completed' : 'failed'}
+**Summary:** ${success ? 'Task completed successfully.' : 'Task failed after retries.'}
+**Files Modified:** ${sessionState.filesModified.join(', ') || 'none'}
+**Tools Used:** ${sessionState.toolsUsed.length}
+**Duration:** ${((Date.now() - sessionState.startTime) / 1000).toFixed(1)}s
+${prUrl ? `**PR:** ${prUrl}` : ''}
+---
+`;
+    await fs.appendFile(PROGRESS_PATH, entry);
+    console.log('   Appended session to claude-progress.txt');
+  } catch (err) {
+    console.error('   Failed to update progress file:', err);
+  }
+}
+
+/**
  * Specialized Subagents - Minimal prompts for speed/context efficiency
  */
 const SUBAGENTS: Record<string, AgentDefinition> = {
@@ -84,6 +232,18 @@ const SUBAGENTS: Record<string, AgentDefinition> = {
     tools: ['Read', 'Grep', 'Glob', 'Bash'],
     prompt: 'Find relevant files, identify patterns, report concisely.',
     model: 'haiku'
+  },
+
+  // Think tool for complex decisions (per Anthropic best practices)
+  'thinker': {
+    description: 'Analyze complex problems before acting. Use for architecture decisions or when unsure.',
+    tools: ['Read', 'Grep', 'Glob'],
+    prompt: `Think step by step before deciding:
+1. What are the options?
+2. What are the tradeoffs?
+3. What's the safest approach?
+Return: recommended action with reasoning.`,
+    model: 'sonnet'
   },
 
   // Code implementation with sonnet
@@ -308,13 +468,17 @@ ${issue.description || 'No description.'}
 ## Steps
 1. Update Linear → "In Progress"
 2. explorer → find relevant files
-3. coder → implement changes
-4. ship → verify_build, complete_feature, complete_task
+3. thinker → if architecture decisions needed
+4. coder → implement changes
+5. ship → verify_build, complete_feature, complete_task
 
-Use consolidated tools: verify_build, complete_feature, complete_task`;
+## Tools
+- verify_build: typecheck + build in one call
+- complete_feature: branch + commit + push + PR in one call
+- complete_task: Linear status + comment + PR link in one call`;
 
   if (attemptNumber > 1) {
-    prompt += `\n\n⚠️ Attempt ${attemptNumber}/${MAX_RETRIES}. Investigate failure first.`;
+    prompt += `\n\n⚠️ Attempt ${attemptNumber}/${MAX_RETRIES}. Use thinker first to analyze failure.`;
   }
 
   return prompt;
@@ -360,11 +524,14 @@ Session stats:
  * Main agent loop
  */
 export async function runAgent(): Promise<void> {
-  console.log('\n🤖 Dev Agent v2 | Agents: ' + Object.keys(SUBAGENTS).join(', '));
+  console.log('\n🤖 Dev Agent v3 | Agents: ' + Object.keys(SUBAGENTS).join(', '));
   console.log(`Dir: ${WORKING_DIR} | Poll: ${POLL_INTERVAL_MS / 1000}s | Retries: ${MAX_RETRIES}\n`);
 
+  // Session startup - read previous state
+  const { features, progress } = await sessionStartup();
+
   // Initialize repository
-  console.log('📁 Initializing repository...');
+  console.log('\n📁 Initializing repository...');
   try {
     const initResponse = query({
       prompt: `Initialize the repository:
@@ -423,6 +590,9 @@ export async function runAgent(): Promise<void> {
         // Process the first issue
         const issue = issueList[0];
         const success = await processIssue(issue);
+
+        // Session handoff - save state for future sessions
+        await sessionHandoff(issue, success);
 
         if (success) {
           console.log(`\n✅ Completed: ${issue.identifier}`);

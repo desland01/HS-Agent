@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0",
+  "description": "Structured feature tracking for dev-agent. Agent can only modify 'passes' field.",
+  "lastUpdated": null,
+  "features": [
+    {
+      "id": "GRO-5",
+      "title": "Create Agent Skills Framework directory structure",
+      "priority": 1,
+      "passes": false,
+      "attempts": 0,
+      "lastAttempt": null,
+      "prUrl": null,
+      "notes": "Phase 1.1 - Create src/skills/ with SKILL.md format"
+    }
+  ]
+}
