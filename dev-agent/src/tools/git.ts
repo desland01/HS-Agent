@@ -272,15 +272,17 @@ export const gitServer = createSdkMcpServer({
       }
     ),
 
-    // Get diff
+    // Get diff - truncated for token efficiency
     tool(
       'git_diff',
-      'Show the diff of changes. Can show staged, unstaged, or all changes.',
+      'Show diff of changes. Truncated to 100 lines max. Use file param for full diff of specific file.',
       {
         staged: z.boolean().default(false)
           .describe('Show only staged changes'),
         file: z.string().optional()
-          .describe('Specific file to show diff for')
+          .describe('Specific file to show diff for'),
+        maxLines: z.number().min(10).max(500).default(100)
+          .describe('Max lines to return (default 100)')
       },
       async (args) => {
         try {
@@ -288,10 +290,16 @@ export const gitServer = createSdkMcpServer({
           const fileArg = args.file || '';
           const result = await runGitCommand(`git diff ${stagedFlag} ${fileArg}`);
 
+          const lines = result.stdout.split('\n');
+          const truncated = lines.length > args.maxLines;
+          const output = lines.slice(0, args.maxLines).join('\n');
+
           return {
             content: [{
               type: 'text',
-              text: result.stdout || 'No changes'
+              text: truncated
+                ? `${output}\n\n[Truncated: ${lines.length - args.maxLines} more lines. Use file param for specific file.]`
+                : (output || 'No changes')
             }]
           };
         } catch (error) {

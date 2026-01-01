@@ -75,91 +75,30 @@ let sessionState: SessionState = {
 };
 
 /**
- * Specialized Subagents
- *
- * These agents handle specific aspects of the development workflow,
- * allowing for better context management and parallel operations.
+ * Specialized Subagents - Minimal prompts for speed/context efficiency
  */
 const SUBAGENTS: Record<string, AgentDefinition> = {
-  // Explorer agent - understands codebase before making changes
-  'code-explorer': {
-    description: 'Explores and analyzes the codebase to understand context, architecture, and existing patterns before making changes. Use this first for any new task.',
+  // Fast exploration with haiku
+  'explorer': {
+    description: 'Find relevant files and understand codebase patterns. Use first.',
     tools: ['Read', 'Grep', 'Glob', 'Bash'],
-    prompt: `You are a code exploration specialist. Your job is to:
-1. Understand the codebase structure and architecture
-2. Find relevant files for the task at hand
-3. Identify existing patterns and conventions
-4. Report findings clearly for the implementation phase
-
-Be thorough but focused. Look for:
-- Related files and dependencies
-- Existing patterns to follow
-- Potential impacts of changes
-- Test files that may need updates`,
-    model: 'haiku' // Fast model for exploration
+    prompt: 'Find relevant files, identify patterns, report concisely.',
+    model: 'haiku'
   },
 
-  // Implementer agent - writes code changes
-  'implementer': {
-    description: 'Implements code changes following established patterns. Use after exploration to write actual code.',
+  // Code implementation with sonnet
+  'coder': {
+    description: 'Write/edit code following existing patterns.',
     tools: ['Read', 'Write', 'Edit', 'Grep', 'Glob'],
-    prompt: `You are a code implementation specialist. Your job is to:
-1. Write clean, well-structured TypeScript code
-2. Follow existing patterns in the codebase
-3. Add appropriate comments and documentation
-4. Handle edge cases properly
-
-Guidelines:
-- Match the style of surrounding code
-- Use TypeScript strict typing
-- Keep functions small and focused
-- Add JSDoc comments for public APIs`,
+    prompt: 'Write clean TypeScript. Match existing style. Handle edge cases.',
     model: 'sonnet'
   },
 
-  // Tester agent - runs tests and builds
-  'tester': {
-    description: 'Runs tests, type checks, and builds to verify code changes. Use after implementation.',
-    tools: ['Bash', 'Read', 'Grep'],
-    prompt: `You are a testing specialist. Your job is to:
-1. Run type checks (npm run typecheck)
-2. Run builds (npm run build)
-3. Run tests (npm test) if they exist
-4. Analyze any failures and report clearly
-
-If tests fail:
-- Identify the root cause
-- Explain what went wrong
-- Suggest fixes`,
-    model: 'haiku'
-  },
-
-  // Git operations agent - handles version control
-  'git-ops': {
-    description: 'Handles git operations: branching, committing, pushing, and creating PRs. Use after tests pass.',
+  // Git + verification combined (reduces agent switching)
+  'ship': {
+    description: 'Verify build, commit, push, create PR. Use when code is ready.',
     tools: ['Bash', 'Read'],
-    prompt: `You are a git operations specialist. Your job is to:
-1. Create feature branches with proper naming
-2. Stage and commit changes with clear messages
-3. Push to remote
-4. Create pull requests via gh CLI
-
-Branch naming: feature/{issue-id}-{short-description}
-Commit messages: Clear, descriptive, following conventional commits`,
-    model: 'haiku'
-  },
-
-  // Linear integration agent - manages issue tracking
-  'linear-ops': {
-    description: 'Manages Linear issue status updates and comments. Use to update progress.',
-    tools: ['mcp__linear__update_issue_status', 'mcp__linear__add_comment', 'mcp__linear__link_pr_to_issue', 'mcp__linear__assign_to_human'],
-    prompt: `You are a project management specialist. Your job is to:
-1. Update issue status (Todo → In Progress → In Review → Done)
-2. Add progress comments
-3. Link PRs to issues
-4. Escalate blockers when needed
-
-Keep stakeholders informed with clear, concise updates.`,
+    prompt: 'Run verify_build. If pass: use complete_feature tool. Report PR URL.',
     model: 'haiku'
   }
 };
@@ -359,53 +298,23 @@ Working Directory: ${WORKING_DIR}
 }
 
 /**
- * Build the task prompt for an issue
+ * Build the task prompt for an issue - concise for token efficiency
  */
 function buildTaskPrompt(issue: Issue, attemptNumber: number): string {
-  let prompt = `## Task: ${issue.identifier} - ${issue.title}
+  let prompt = `# ${issue.identifier}: ${issue.title}
 
-${issue.description || 'No description provided.'}
+${issue.description || 'No description.'}
 
----
+## Steps
+1. Update Linear → "In Progress"
+2. explorer → find relevant files
+3. coder → implement changes
+4. ship → verify_build, complete_feature, complete_task
 
-## Workflow
-
-1. **Update Linear** - Move issue to "In Progress" and add a starting comment
-
-2. **Explore** - Use the code-explorer subagent to understand:
-   - Relevant files and dependencies
-   - Existing patterns to follow
-   - Potential impacts
-
-3. **Plan** - Think through the implementation approach
-
-4. **Implement** - Use the implementer subagent to write code:
-   - Follow existing patterns
-   - Handle edge cases
-   - Add documentation
-
-5. **Test** - Use the tester subagent to verify:
-   - Run \`npm run typecheck\`
-   - Run \`npm run build\`
-   - Run tests if they exist
-
-6. **Commit & PR** - Use the git-ops subagent:
-   - Create feature branch: feature/${issue.identifier.toLowerCase()}-description
-   - Commit with clear message
-   - Push and create PR
-
-7. **Update Linear** - Move to "In Review" and link the PR
-
-Issue URL: ${issue.url}`;
+Use consolidated tools: verify_build, complete_feature, complete_task`;
 
   if (attemptNumber > 1) {
-    prompt += `
-
----
-
-⚠️ **Note:** This is attempt ${attemptNumber}/${MAX_RETRIES}.
-Previous attempts failed. Focus on understanding why and fixing the root cause.
-Consider using the code-explorer subagent to investigate the failure.`;
+    prompt += `\n\n⚠️ Attempt ${attemptNumber}/${MAX_RETRIES}. Investigate failure first.`;
   }
 
   return prompt;
@@ -429,17 +338,10 @@ Session stats:
 
   try {
     const response = query({
-      prompt: `Escalate issue ${issue.identifier} to a human.
-
-Reason: ${reason}
-
-1. Add a detailed comment explaining what was attempted and why it failed
-2. Assign the issue to a human team member
-3. Update the issue priority to urgent`,
+      prompt: `Escalate ${issue.identifier}: ${reason.slice(0, 200)}. Use assign_to_human tool.`,
       options: {
-        model: 'claude-sonnet-4-5',
-        mcpServers: { linear: linearServer },
-        agents: { 'linear-ops': SUBAGENTS['linear-ops'] }
+        model: 'claude-haiku-3-5',
+        mcpServers: { linear: linearServer }
       }
     });
 
@@ -458,14 +360,8 @@ Reason: ${reason}
  * Main agent loop
  */
 export async function runAgent(): Promise<void> {
-  console.log('\n' + '='.repeat(60));
-  console.log('🤖 Home Service Dev Agent - Multi-Agent Architecture');
-  console.log('='.repeat(60));
-  console.log(`Working Directory: ${WORKING_DIR}`);
-  console.log(`Poll Interval: ${POLL_INTERVAL_MS / 1000}s`);
-  console.log(`Max Retries: ${MAX_RETRIES}`);
-  console.log(`Subagents: ${Object.keys(SUBAGENTS).join(', ')}`);
-  console.log('='.repeat(60) + '\n');
+  console.log('\n🤖 Dev Agent v2 | Agents: ' + Object.keys(SUBAGENTS).join(', '));
+  console.log(`Dir: ${WORKING_DIR} | Poll: ${POLL_INTERVAL_MS / 1000}s | Retries: ${MAX_RETRIES}\n`);
 
   // Initialize repository
   console.log('📁 Initializing repository...');
