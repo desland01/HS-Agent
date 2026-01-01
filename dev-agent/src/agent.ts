@@ -220,6 +220,32 @@ ${prUrl ? `**PR:** ${prUrl}` : ''}
   } catch (err) {
     console.error('   Failed to update progress file:', err);
   }
+
+  // 3. CRITICAL: Update Linear status to remove from Todo queue
+  try {
+    const linearIssue = await linearClient.issue(issue.id);
+    if (linearIssue) {
+      const team = await linearIssue.team;
+      const states = await team?.states();
+
+      // Move to Done if successful, otherwise leave for retry
+      if (success) {
+        const doneState = states?.nodes.find(s => s.name.toLowerCase() === 'done');
+        if (doneState) {
+          await linearClient.updateIssue(issue.id, { stateId: doneState.id });
+          console.log(`   Linear: Moved ${issue.identifier} to Done`);
+
+          // Add completion comment
+          await linearClient.createComment({
+            issueId: issue.id,
+            body: `## ✅ Task Completed\n\n**Duration:** ${((Date.now() - sessionState.startTime) / 1000).toFixed(1)}s\n**Tools Used:** ${sessionState.toolsUsed.length}\n${prUrl ? `**PR:** ${prUrl}` : ''}\n\n---\n*Completed by dev-agent*`
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('   Failed to update Linear status:', err);
+  }
 }
 
 /**
