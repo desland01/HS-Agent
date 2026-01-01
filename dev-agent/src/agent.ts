@@ -226,12 +226,12 @@ ${prUrl ? `**PR:** ${prUrl}` : ''}
  * Specialized Subagents - Minimal prompts for speed/context efficiency
  */
 const SUBAGENTS: Record<string, AgentDefinition> = {
-  // Fast exploration with haiku
+  // Exploration - find relevant files and patterns
   'explorer': {
     description: 'Find relevant files and understand codebase patterns. Use first.',
     tools: ['Read', 'Grep', 'Glob', 'Bash'],
     prompt: 'Find relevant files, identify patterns, report concisely.',
-    model: 'haiku'
+    model: 'opus'
   },
 
   // Think tool for complex decisions (per Anthropic best practices)
@@ -243,15 +243,15 @@ const SUBAGENTS: Record<string, AgentDefinition> = {
 2. What are the tradeoffs?
 3. What's the safest approach?
 Return: recommended action with reasoning.`,
-    model: 'sonnet'
+    model: 'opus'
   },
 
-  // Code implementation with sonnet
+  // Code implementation
   'coder': {
     description: 'Write/edit code following existing patterns.',
     tools: ['Read', 'Write', 'Edit', 'Grep', 'Glob'],
     prompt: 'Write clean TypeScript. Match existing style. Handle edge cases.',
-    model: 'sonnet'
+    model: 'opus'
   },
 
   // Git + verification combined (reduces agent switching)
@@ -259,7 +259,7 @@ Return: recommended action with reasoning.`,
     description: 'Verify build, commit, push, create PR. Use when code is ready.',
     tools: ['Bash', 'Read'],
     prompt: 'Run verify_build. If pass: use complete_feature tool. Report PR URL.',
-    model: 'haiku'
+    model: 'opus'
   }
 };
 
