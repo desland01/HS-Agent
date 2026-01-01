@@ -574,13 +574,20 @@ export async function runAgent(): Promise<void> {
         first: 10
       });
 
-      const issueList: Issue[] = issues.nodes.map(issue => ({
-        id: issue.id,
-        identifier: issue.identifier,
-        title: issue.title,
-        description: issue.description || undefined,
-        url: issue.url
-      }));
+      // Map and sort by issue number (GRO-9 before GRO-44)
+      const issueList: Issue[] = issues.nodes
+        .map(issue => ({
+          id: issue.id,
+          identifier: issue.identifier,
+          title: issue.title,
+          description: issue.description || undefined,
+          url: issue.url
+        }))
+        .sort((a, b) => {
+          const numA = parseInt(a.identifier.split('-')[1]) || 0;
+          const numB = parseInt(b.identifier.split('-')[1]) || 0;
+          return numA - numB;
+        });
 
       console.log(`Found ${issueList.length} issue(s) assigned to ${viewer.name}`);
 
