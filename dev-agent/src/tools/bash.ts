@@ -303,6 +303,126 @@ export const bashServer = createSdkMcpServer({
           }]
         };
       }
+    ),
+
+    // CONSOLIDATED: Verify code quality before committing
+    tool(
+      'verify_build',
+      'Run typecheck and build to verify code quality. Use before committing changes. Returns concise pass/fail status with error details only on failure.',
+      {
+        skipTypecheck: z.boolean().default(false)
+          .describe('Skip TypeScript type checking'),
+        skipBuild: z.boolean().default(false)
+          .describe('Skip build step'),
+        runTests: z.boolean().default(false)
+          .describe('Also run tests (npm test)')
+      },
+      async (args) => {
+        const results: { step: string; status: 'pass' | 'fail'; output?: string }[] = [];
+
+        // Step 1: Typecheck
+        if (!args.skipTypecheck) {
+          try {
+            await execAsync('npm run typecheck', {
+              cwd: workingDir,
+              timeout: 120000,
+              maxBuffer: 10 * 1024 * 1024,
+            });
+            results.push({ step: 'typecheck', status: 'pass' });
+          } catch (error: any) {
+            // Extract only the error lines, not all output
+            const errorLines = (error.stdout || error.stderr || error.message)
+              .split('\n')
+              .filter((line: string) => line.includes('error') || line.includes('Error'))
+              .slice(0, 10) // Limit to first 10 errors
+              .join('\n');
+
+            results.push({
+              step: 'typecheck',
+              status: 'fail',
+              output: errorLines || 'Type check failed. Run `npm run typecheck` for details.'
+            });
+          }
+        }
+
+        // Step 2: Build
+        if (!args.skipBuild && !results.some(r => r.status === 'fail')) {
+          try {
+            await execAsync('npm run build', {
+              cwd: workingDir,
+              timeout: 180000,
+              maxBuffer: 10 * 1024 * 1024,
+            });
+            results.push({ step: 'build', status: 'pass' });
+          } catch (error: any) {
+            const errorLines = (error.stdout || error.stderr || error.message)
+              .split('\n')
+              .filter((line: string) => line.includes('error') || line.includes('Error'))
+              .slice(0, 10)
+              .join('\n');
+
+            results.push({
+              step: 'build',
+              status: 'fail',
+              output: errorLines || 'Build failed. Run `npm run build` for details.'
+            });
+          }
+        }
+
+        // Step 3: Tests (optional)
+        if (args.runTests && !results.some(r => r.status === 'fail')) {
+          try {
+            await execAsync('npm test', {
+              cwd: workingDir,
+              timeout: 300000,
+              maxBuffer: 10 * 1024 * 1024,
+            });
+            results.push({ step: 'test', status: 'pass' });
+          } catch (error: any) {
+            const errorLines = (error.stdout || error.stderr || error.message)
+              .split('\n')
+              .filter((line: string) =>
+                line.includes('FAIL') ||
+                line.includes('Error') ||
+                line.includes('✗') ||
+                line.includes('AssertionError')
+              )
+              .slice(0, 15)
+              .join('\n');
+
+            results.push({
+              step: 'test',
+              status: 'fail',
+              output: errorLines || 'Tests failed. Run `npm test` for details.'
+            });
+          }
+        }
+
+        // Format response
+        const allPassed = results.every(r => r.status === 'pass');
+        const failedResults = results.filter(r => r.status === 'fail');
+
+        if (allPassed) {
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ All checks passed: ${results.map(r => r.step).join(', ')}`
+            }]
+          };
+        } else {
+          const errorReport = failedResults
+            .map(r => `### ${r.step} FAILED\n\`\`\`\n${r.output}\n\`\`\``)
+            .join('\n\n');
+
+          return {
+            content: [{
+              type: 'text',
+              text: `❌ Verification failed\n\n${errorReport}\n\n**Fix the errors above before committing.**`
+            }],
+            isError: true
+          };
+        }
+      }
     )
   ]
 });

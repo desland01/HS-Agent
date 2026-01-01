@@ -333,6 +333,95 @@ export const gitServer = createSdkMcpServer({
       }
     ),
 
+    // CONSOLIDATED: Complete feature workflow (branch → commit → push → PR)
+    tool(
+      'complete_feature',
+      'Complete a feature in one operation: creates branch, stages all changes, commits, pushes, and creates a PR. Use this instead of separate git commands when finishing a task.',
+      {
+        issueId: z.string()
+          .describe('Linear issue ID for branch naming (e.g., "GRO-5")'),
+        branchDescription: z.string()
+          .describe('Short description for branch name (e.g., "add-skills-framework")'),
+        commitMessage: z.string()
+          .min(10, 'Commit message must be at least 10 characters')
+          .describe('Descriptive commit message'),
+        prTitle: z.string()
+          .describe('Pull request title'),
+        prBody: z.string()
+          .describe('Pull request body/description (supports markdown)'),
+        baseBranch: z.string().default('main')
+          .describe('Base branch to create from and merge into')
+      },
+      async (args) => {
+        const branchName = `feature/${args.issueId.toLowerCase()}-${args.branchDescription}`;
+        const steps: string[] = [];
+
+        try {
+          // Step 1: Fetch and checkout base branch
+          await runGitCommand('git fetch origin');
+          await runGitCommand(`git checkout ${args.baseBranch}`);
+          await runGitCommand(`git pull origin ${args.baseBranch}`);
+          steps.push(`✓ Updated ${args.baseBranch}`);
+
+          // Step 2: Create feature branch
+          await runGitCommand(`git checkout -b ${branchName}`);
+          steps.push(`✓ Created branch: ${branchName}`);
+
+          // Step 3: Stage all changes
+          await runGitCommand('git add .');
+          steps.push('✓ Staged all changes');
+
+          // Step 4: Commit
+          const escapedMessage = args.commitMessage.replace(/'/g, "'\\''");
+          await runGitCommand(`git commit -m '${escapedMessage}'`);
+          const lastCommit = await runGitCommand('git log -1 --oneline');
+          steps.push(`✓ Committed: ${lastCommit.stdout.trim()}`);
+
+          // Step 5: Push
+          await runGitCommand(`git push -u origin ${branchName}`);
+          steps.push(`✓ Pushed to origin/${branchName}`);
+
+          // Step 6: Create PR
+          const escapedTitle = args.prTitle.replace(/'/g, "'\\''");
+          const escapedBody = args.prBody.replace(/'/g, "'\\''");
+          const prResult = await runGitCommand(
+            `gh pr create --title '${escapedTitle}' --body '${escapedBody}' --base ${args.baseBranch}`
+          );
+          const prUrl = prResult.stdout.trim().split('\n').pop();
+          steps.push(`✓ Created PR: ${prUrl}`);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `## Feature Complete\n\n${steps.join('\n')}\n\n**PR URL:** ${prUrl}`
+            }]
+          };
+        } catch (error: any) {
+          // Provide actionable error message
+          const lastStep = steps.length > 0 ? steps[steps.length - 1] : 'initialization';
+          let suggestion = '';
+
+          if (error.message?.includes('already exists')) {
+            suggestion = `\n\n**Fix:** Delete existing branch with \`git branch -D ${branchName}\` or use a different branch name.`;
+          } else if (error.message?.includes('nothing to commit')) {
+            suggestion = '\n\n**Fix:** Make sure you have changes to commit. Use `git_status` to check.';
+          } else if (error.message?.includes('authentication')) {
+            suggestion = '\n\n**Fix:** Check that GITHUB_TOKEN is set and has push access.';
+          } else if (error.message?.includes('rejected')) {
+            suggestion = '\n\n**Fix:** Pull latest changes first with `git pull origin main`.';
+          }
+
+          return {
+            content: [{
+              type: 'text',
+              text: `## Feature Failed\n\nCompleted steps:\n${steps.join('\n') || '(none)'}\n\n**Error after ${lastStep}:**\n${error.message}${suggestion}`
+            }],
+            isError: true
+          };
+        }
+      }
+    ),
+
     // Stash changes
     tool(
       'git_stash',

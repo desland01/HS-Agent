@@ -393,6 +393,167 @@ export const linearServer = createSdkMcpServer({
           };
         }
       }
+    ),
+
+    // CONSOLIDATED: Complete task workflow (move to review + link PR + add completion comment)
+    tool(
+      'complete_task',
+      'Complete a task in one operation: moves issue to "In Review", links the PR, and adds a completion comment. Use this instead of separate Linear calls when finishing a task.',
+      {
+        issueId: z.string().describe('The Linear issue ID or identifier'),
+        prUrl: z.string().url().describe('The GitHub PR URL'),
+        prTitle: z.string().describe('Title of the PR'),
+        summary: z.string().describe('Brief summary of changes made (2-3 sentences)')
+      },
+      async (args) => {
+        try {
+          const issue = await linearClient.issue(args.issueId);
+          if (!issue) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Issue ${args.issueId} not found. Check the issue ID format (e.g., "GRO-5" or the full UUID).`
+              }],
+              isError: true
+            };
+          }
+
+          // Get workflow state for "In Review"
+          const team = await issue.team;
+          const states = await team?.states();
+          const reviewState = states?.nodes.find(
+            s => s.name.toLowerCase() === 'in review'
+          );
+
+          if (!reviewState) {
+            return {
+              content: [{
+                type: 'text',
+                text: `"In Review" status not found in workflow. Available states: ${states?.nodes.map(s => s.name).join(', ')}`
+              }],
+              isError: true
+            };
+          }
+
+          // Step 1: Move to "In Review"
+          await linearClient.updateIssue(issue.id, {
+            stateId: reviewState.id
+          });
+
+          // Step 2: Add completion comment with PR link
+          const commentBody = `## Task Completed
+
+### Summary
+${args.summary}
+
+### Pull Request
+**[${args.prTitle}](${args.prUrl})**
+
+---
+*Ready for code review.*`;
+
+          await linearClient.createComment({
+            issueId: issue.id,
+            body: commentBody
+          });
+
+          return {
+            content: [{
+              type: 'text',
+              text: `✅ Task ${args.issueId} completed:\n- Moved to "In Review"\n- PR linked: ${args.prUrl}\n- Completion comment added`
+            }]
+          };
+        } catch (error: any) {
+          // Provide actionable error message
+          let suggestion = '';
+          if (error.message?.includes('not found')) {
+            suggestion = '\n\n**Fix:** Verify the issue ID using `get_assigned_issues` first.';
+          } else if (error.message?.includes('unauthorized')) {
+            suggestion = '\n\n**Fix:** Check that LINEAR_API_KEY has write permissions.';
+          }
+
+          return {
+            content: [{
+              type: 'text',
+              text: `Error completing task: ${error.message}${suggestion}`
+            }],
+            isError: true
+          };
+        }
+      }
+    ),
+
+    // Search issues (more targeted than list)
+    tool(
+      'search_issues',
+      'Search for issues by keyword, label, or status. More targeted than get_assigned_issues.',
+      {
+        query: z.string().optional()
+          .describe('Search query to match in title or description'),
+        labelName: z.string().optional()
+          .describe('Filter by label name'),
+        status: z.enum(['todo', 'in_progress', 'review', 'done', 'all']).default('all')
+          .describe('Filter by status'),
+        limit: z.number().min(1).max(20).default(5)
+          .describe('Maximum results (default 5 for token efficiency)')
+      },
+      async (args) => {
+        try {
+          const viewer = await linearClient.viewer;
+
+          // Build filter
+          const filter: any = {
+            assignee: { id: { eq: viewer.id } }
+          };
+
+          if (args.status !== 'all') {
+            filter.state = { name: { eq: WORKFLOW_STATES[args.status] } };
+          }
+
+          if (args.labelName) {
+            filter.labels = { name: { eq: args.labelName } };
+          }
+
+          const issues = await linearClient.issues({
+            filter,
+            first: args.limit
+          });
+
+          // Filter by query if provided
+          let filteredIssues = issues.nodes;
+          if (args.query) {
+            const queryLower = args.query.toLowerCase();
+            filteredIssues = filteredIssues.filter(issue =>
+              issue.title.toLowerCase().includes(queryLower) ||
+              issue.description?.toLowerCase().includes(queryLower)
+            );
+          }
+
+          // Return concise format
+          const results = filteredIssues.map(issue => ({
+            id: issue.identifier,
+            title: issue.title,
+            url: issue.url
+          }));
+
+          return {
+            content: [{
+              type: 'text',
+              text: results.length > 0
+                ? `Found ${results.length} issue(s):\n${results.map(r => `- ${r.id}: ${r.title}`).join('\n')}`
+                : 'No matching issues found.'
+            }]
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Error searching issues: ${error}`
+            }],
+            isError: true
+          };
+        }
+      }
     )
   ]
 });
