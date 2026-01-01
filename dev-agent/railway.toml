@@ -1,0 +1,36 @@
+# Railway configuration for Home Service Dev Agent
+# https://docs.railway.app/deploy/config-as-code
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Run continuously (worker service, not a web server)
+numReplicas = 1
+
+# Health checks
+healthcheckPath = ""
+healthcheckTimeout = 30
+
+# Restart on failure
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+# Resource limits (Railway Pro plan recommended)
+# Adjust based on your plan and needs
+# memoryMB = 2048
+# cpuQuota = 100
+
+[deploy.env]
+# These should be set in Railway dashboard as secrets:
+# - ANTHROPIC_API_KEY
+# - LINEAR_API_KEY
+# - GITHUB_TOKEN
+
+# Non-sensitive defaults
+NODE_ENV = "production"
+WORKING_DIRECTORY = "/app/repo"
+
+# Logging
+LOG_LEVEL = "info"
