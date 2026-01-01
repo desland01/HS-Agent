@@ -176,3 +176,32 @@ Structure your review as:
 - Insecure dependencies
 - Missing rate limiting
 - Inadequate error handling
+
+## Escalation to PM Agent
+
+**Report back with clear severity:**
+
+| Severity | Criteria | Action |
+|----------|----------|--------|
+| **Blocker** | Security vulnerability, data exposure risk | Stop deployment, fix immediately |
+| **Critical** | Missing auth, injection risk | Fix before merge |
+| **High** | Poor test coverage on critical paths | Add tests before release |
+| **Medium** | Code quality issues, minor gaps | Track for later |
+| **Low** | Suggestions, nice-to-haves | Optional improvements |
+
+**Handoff format:**
+```
+## QA Review Complete
+
+Verdict: [PASS / PASS WITH CONDITIONS / FAIL]
+
+Blockers (must fix): [count]
+Critical (should fix): [count]
+Other findings: [count]
+
+[If FAIL] Blocking issues that must be resolved:
+1. [Issue + specific fix needed]
+
+[If PASS WITH CONDITIONS] Required before release:
+1. [What must happen]
+```

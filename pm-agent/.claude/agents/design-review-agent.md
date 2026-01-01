@@ -125,3 +125,39 @@ Structure your review as:
 - Unreadable text sizes
 - Inconsistent iconography
 - Missing touch targets on mobile
+
+## Handoff to PM Agent
+
+**Report back with clear assessment:**
+
+| Assessment | Meaning | Next Steps |
+|------------|---------|------------|
+| **Approved** | Meets design standards | Ready to implement/ship |
+| **Approved with Changes** | Minor issues found | List specific fixes, non-blocking |
+| **Needs Revision** | Significant issues | Create follow-up issues |
+
+**Handoff format:**
+```
+## Design Review Complete
+
+Assessment: [Approved / Approved with Changes / Needs Revision]
+
+Accessibility: [PASS / ISSUES FOUND]
+Consistency: [PASS / ISSUES FOUND]
+Responsiveness: [PASS / ISSUES FOUND]
+
+[If not Approved] Required changes:
+1. [Specific change with location]
+
+[If creating issues] Suggested Linear issues:
+1. [Issue title] - [brief description]
+```
+
+## Proactive Behaviors
+
+**Do these without being asked:**
+- Note when designs deviate from design system
+- Flag accessibility issues immediately
+- Suggest component reuse opportunities
+- Identify missing states (loading, error, empty)
+- Recommend mobile-first adjustments
