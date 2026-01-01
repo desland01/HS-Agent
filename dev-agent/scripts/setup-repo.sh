@@ -15,11 +15,12 @@ echo "Branch: $BRANCH"
 
 # Configure git
 git config --global user.name "Dev Agent"
-git config --global user.email "dev-agent@yourdomain.com"
+git config --global user.email "dev-agent@grovestreetpainting.com"
+git config --global init.defaultBranch main
 
-# Configure gh CLI
+# Configure gh CLI (suppress warnings about GITHUB_TOKEN env var)
 if [ -n "$GITHUB_TOKEN" ]; then
-    echo "$GITHUB_TOKEN" | gh auth login --with-token
+    echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true
     echo "GitHub CLI authenticated"
 fi
 
