@@ -16,9 +16,15 @@
  */
 
 import { query, type SDKMessage, type SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
+import { LinearClient } from '@linear/sdk';
 import { linearServer } from './tools/linear.js';
 import { gitServer, setWorkingDirectory as setGitDir } from './tools/git.js';
 import { bashServer, setWorkingDirectory as setBashDir } from './tools/bash.js';
+
+// Direct Linear client for fetching issues (more reliable than going through Claude)
+const linearClient = new LinearClient({
+  apiKey: process.env.LINEAR_API_KEY!
+});
 
 const MAX_RETRIES = 3;
 const POLL_INTERVAL_MS = 30000; // 30 seconds between task checks
@@ -317,32 +323,25 @@ export async function runAgent(): Promise<void> {
     try {
       console.log('\n--- Checking for new tasks ---');
 
-      // Fetch todo issues
-      const fetchResponse = query({
-        prompt: 'Fetch all issues assigned to me with status "todo". Return the list.',
-        options: {
-          model: 'claude-sonnet-4-5',
-          mcpServers: { linear: linearServer },
-          tools: ['mcp__linear__get_assigned_issues']
-        }
+      // Fetch todo issues directly from Linear (more reliable)
+      const viewer = await linearClient.viewer;
+      const issues = await linearClient.issues({
+        filter: {
+          assignee: { id: { eq: viewer.id } },
+          state: { name: { eq: 'Todo' } }
+        },
+        first: 10
       });
 
-      let issueList: Issue[] = [];
-      for await (const message of fetchResponse) {
-        if (message.type === 'result' && message.subtype === 'success') {
-          try {
-            // Try to parse the result string as JSON
-            const resultStr = message.result || '';
-            // Look for JSON array in the result
-            const jsonMatch = resultStr.match(/\[[\s\S]*\]/);
-            if (jsonMatch) {
-              issueList = JSON.parse(jsonMatch[0]);
-            }
-          } catch {
-            console.log('No issues found or parse error');
-          }
-        }
-      }
+      const issueList: Issue[] = issues.nodes.map(issue => ({
+        id: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        description: issue.description || undefined,
+        url: issue.url
+      }));
+
+      console.log(`Found ${issueList.length} issue(s) assigned to ${viewer.name}`);
 
       if (issueList.length === 0) {
         console.log('No tasks in queue. Waiting...');
