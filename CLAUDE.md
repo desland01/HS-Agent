@@ -2,6 +2,30 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Agent Memory & Session Management
+
+This project uses [Beads](https://github.com/steveyegge/beads) for agent memory. At session start:
+
+```bash
+bd quickstart   # Load project context and active work
+```
+
+At session end:
+
+```bash
+bd land         # Save progress and generate handoff
+```
+
+See `AGENTS.md` for full workflow instructions.
+
+## Key Documentation
+
+| Document | Purpose |
+|----------|---------|
+| `docs/PRD.md` | Product requirements, MVP definition, acceptance criteria |
+| `docs/SECURITY.md` | Security checklist (mandatory for every PR) |
+| `AGENTS.md` | Agent workflow instructions |
+
 ## Build & Development Commands
 
 ```bash
