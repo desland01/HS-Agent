@@ -80,11 +80,11 @@ SO THAT I only spend time on serious prospects
 ```
 
 **Acceptance Criteria:**
-- [ ] Agent responds to new lead within 5 minutes
-- [ ] Uses BANT (Budget, Authority, Need, Timeline) questions
-- [ ] Marks lead as hot/warm/cool based on responses
-- [ ] Books consultation if lead is qualified
-- [ ] Updates CRM with all conversation data
+- [x] Agent responds to new lead within 5 minutes
+- [x] Uses BANT (Budget, Authority, Need, Timeline) questions
+- [x] Marks lead as hot/warm/cool based on responses
+- [x] Books consultation if lead is qualified
+- [x] Updates CRM with all conversation data
 
 ### Reminder Agent
 ```
@@ -94,11 +94,11 @@ SO THAT customers show up and I don't waste trips
 ```
 
 **Acceptance Criteria:**
-- [ ] Sends confirmation 24 hours before appointment
-- [ ] Sends reminder 2 hours before
-- [ ] Allows customer to confirm, reschedule, or cancel
-- [ ] Updates calendar if rescheduled
-- [ ] Alerts owner if canceled
+- [x] Sends confirmation 24 hours before appointment
+- [x] Sends reminder 2 hours before
+- [x] Allows customer to confirm, reschedule, or cancel
+- [ ] Updates calendar if rescheduled (pending calendar integration)
+- [x] Alerts owner if canceled
 
 ### Follow-up Agent
 ```
@@ -108,10 +108,10 @@ SO THAT I close more jobs without chasing people
 ```
 
 **Acceptance Criteria:**
-- [ ] Sends first follow-up 2 days after estimate
-- [ ] Handles common objections (price, timing, comparison)
-- [ ] Escalates hot leads to owner
-- [ ] Stops after 3 touches or explicit "no"
+- [x] Sends first follow-up 2 days after estimate
+- [x] Handles common objections (price, timing, comparison)
+- [x] Escalates hot leads to owner
+- [x] Stops after 3 touches or explicit "no"
 
 ---
 
@@ -137,13 +137,14 @@ SO THAT I close more jobs without chasing people
 
 ### Integration Requirements
 
-| System | Type | Priority |
-|--------|------|----------|
-| Twilio | SMS/MMS | P0 |
-| Facebook Messenger | Chat | P0 |
-| GoHighLevel | CRM | P0 |
-| Google Calendar | Calendar | P1 |
-| PaintScout | Estimating | P1 |
+| System | Type | Priority | Status |
+|--------|------|----------|--------|
+| iMessage | SMS via Cloud Mac | P0 | Done |
+| Twilio | SMS/MMS | P0 | Planned |
+| Facebook Messenger | Chat | P0 | Done |
+| GoHighLevel | CRM | P0 | Done |
+| PaintScout | Estimating | P0 | Done |
+| Google Calendar | Calendar | P1 | Planned |
 
 ---
 
@@ -194,16 +195,19 @@ SO THAT I close more jobs without chasing people
 
 ## 8. Release Plan
 
-### Phase 1: Foundation (Current)
+### Phase 1: Foundation (Complete)
 - [x] Dev agent with Linear integration
 - [x] Circuit breaker for cost control
-- [ ] PRD and security documentation
+- [x] PRD and security documentation
 
-### Phase 2: Core Agents (Next)
-- [ ] SDR Agent with BANT
-- [ ] Reminder Agent
-- [ ] Follow-up Agent
-- [ ] Facebook Lead Ads integration
+### Phase 2: Core Agents (Complete)
+- [x] SDR Agent with BANT
+- [x] Reminder Agent
+- [x] Follow-up Agent
+- [x] Facebook Lead Ads integration
+- [ ] Twilio SMS adapter (iMessage working, Twilio planned)
+- [ ] Calendar integration (Google Calendar sync)
+- [ ] Email sending (for follow-up sequences)
 
 ### Phase 3: Owner Experience
 - [ ] Owner Assistant (SMS)

@@ -1,36 +1,32 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+This project uses **Linear** for work tracking. The autonomous dev-agent (`dev-agent/`) processes tasks automatically.
 
 ---
 
 ## Session Start
 
-1. **Load Memory**
-   ```bash
-   bd quickstart
-   ```
-
-2. **Check Linear Queue**
+1. **Check Linear Queue** (https://linear.app/grovestreetpainting)
    - "Up Next" view - Prioritized tasks
+   - "Active Work" view - In progress items
    - "Blocked" view - Items needing human input
 
-3. **Read Context**
+2. **Read Context**
    - `docs/PRD.md` - Product requirements and MVP definition
    - `docs/SECURITY.md` - Security checklist (mandatory for PRs)
    - `CLAUDE.md` - Codebase architecture
 
 ---
 
-## Quick Reference
+## Dev-Agent (Autonomous)
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
-```
+The dev-agent runs continuously and processes Linear tasks:
+- Polls "Up Next" view for new work
+- Explores codebase, implements features, runs tests
+- Creates PRs and moves issues to "In Review"
+- Escalates to human after 3 failed attempts
+
+**Location:** `dev-agent/src/agent.ts`
 
 ---
 
@@ -59,28 +55,25 @@ bd sync               # Sync with git
 
 ---
 
-## Landing the Plane (Session Completion)
+## Session Completion
 
 **When ending a work session**, complete ALL steps below.
 
 **MANDATORY WORKFLOW:**
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed):
+1. **Run quality gates** (if code changed):
    ```bash
    npm run typecheck
    npm run build
    ```
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
+2. **Commit and push**:
    ```bash
-   git pull --rebase
-   bd sync
+   git add -A
+   git commit -m "feat: description"
    git push
    git status  # MUST show "up to date with origin"
    ```
-5. **Update Linear** - Move issue to appropriate state, add PR link if applicable
-6. **Hand off** - Provide context for next session
+3. **Update Linear** - Move issue to appropriate state, add PR link if applicable
 
 **CRITICAL RULES:**
 - Work is NOT complete until `git push` succeeds

@@ -20,13 +20,33 @@ import groveStreetConfig from './config/businesses/grove-street-painting.js';
  */
 
 const app = express();
-app.use(express.json());
 
-// CORS for local development
+// Request body limits (100kb default)
+app.use(express.json({ limit: '100kb' }));
+
+// CORS configuration
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
 app.use((_req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  const origin = _req.headers.origin;
+
+  // In development, allow all origins
+  if (isDevelopment) {
+    res.header('Access-Control-Allow-Origin', '*');
+  } else if (origin && allowedOrigins.includes(origin)) {
+    // In production, only allow configured origins
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+
+  // Handle preflight
+  if (_req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+
   next();
 });
 

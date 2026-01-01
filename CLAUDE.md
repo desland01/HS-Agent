@@ -2,21 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Agent Memory & Session Management
+## Work Tracking
 
-This project uses [Beads](https://github.com/steveyegge/beads) for agent memory. At session start:
+This project uses **Linear** for work tracking. The dev-agent (`dev-agent/`) runs autonomously and processes tasks from Linear.
 
-```bash
-bd quickstart   # Load project context and active work
-```
+**Linear Workspace:** https://linear.app/grovestreetpainting
 
-At session end:
+**Views:**
+- "Up Next" - Prioritized tasks in Todo state
+- "Active Work" - In Progress / In Review
+- "Blocked" - Items needing human input
 
-```bash
-bd land         # Save progress and generate handoff
-```
-
-See `AGENTS.md` for full workflow instructions.
+See `AGENTS.md` for workflow instructions.
 
 ## Key Documentation
 

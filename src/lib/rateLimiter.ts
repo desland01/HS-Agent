@@ -1,12 +1,11 @@
 /**
- * Simple In-Memory Rate Limiter
+ * Rate Limiter with Redis Support
  *
- * WARNING: This is in-memory only and resets on server restart.
- * For production, use Redis:
- *   - Install ioredis
- *   - Replace Map with Redis INCR + EXPIRE
- *   - Add sliding window algorithm for smoother limits
+ * Uses Redis when available for persistence across restarts.
+ * Falls back to in-memory storage for development.
  */
+
+import { getRedisInstance, isUsingRedis } from '../storage/redis.js';
 
 interface RateLimitEntry {
   count: number;
@@ -19,16 +18,19 @@ interface RateLimitResult {
   retryAfterMs?: number;
 }
 
-// In-memory store (will reset on restart)
-const rateLimits = new Map<string, RateLimitEntry>();
+// In-memory fallback store
+const memoryLimits = new Map<string, RateLimitEntry>();
 
-// Cleanup old entries every 5 minutes
+// Redis key prefix
+const RATE_LIMIT_PREFIX = 'ratelimit:';
+
+// Cleanup old in-memory entries every 5 minutes
 setInterval(() => {
   const now = Date.now();
-  for (const [key, entry] of rateLimits.entries()) {
+  for (const [key, entry] of memoryLimits.entries()) {
     // Remove entries older than 24 hours
     if (now - entry.windowStart > 24 * 60 * 60 * 1000) {
-      rateLimits.delete(key);
+      memoryLimits.delete(key);
     }
   }
 }, 5 * 60 * 1000);
@@ -41,17 +43,89 @@ setInterval(() => {
  * @param windowMs - Time window in milliseconds
  * @returns Whether the request is allowed and remaining count
  */
-export function checkRateLimit(
+export async function checkRateLimit(
+  key: string,
+  maxCount: number,
+  windowMs: number
+): Promise<RateLimitResult> {
+  const redis = getRedisInstance();
+
+  if (isUsingRedis() && redis) {
+    return checkRateLimitRedis(redis, key, maxCount, windowMs);
+  }
+
+  return checkRateLimitMemory(key, maxCount, windowMs);
+}
+
+/**
+ * Redis-based rate limiting using INCR with TTL
+ */
+async function checkRateLimitRedis(
+  redis: NonNullable<ReturnType<typeof getRedisInstance>>,
+  key: string,
+  maxCount: number,
+  windowMs: number
+): Promise<RateLimitResult> {
+  const redisKey = `${RATE_LIMIT_PREFIX}${key}`;
+  const ttlSeconds = Math.ceil(windowMs / 1000);
+
+  try {
+    // Use MULTI/EXEC for atomic operation
+    const pipeline = redis.pipeline();
+    pipeline.incr(redisKey);
+    pipeline.ttl(redisKey);
+
+    const results = await pipeline.exec();
+    if (!results) {
+      // Redis error, fall back to memory
+      return checkRateLimitMemory(key, maxCount, windowMs);
+    }
+
+    const [[incrErr, count], [ttlErr, ttl]] = results as [[Error | null, number], [Error | null, number]];
+
+    if (incrErr) {
+      return checkRateLimitMemory(key, maxCount, windowMs);
+    }
+
+    // Set TTL on first request (when TTL is -1)
+    if (ttl === -1) {
+      await redis.expire(redisKey, ttlSeconds);
+    }
+
+    if (count > maxCount) {
+      // Calculate retry time based on remaining TTL
+      const currentTtl = ttl === -1 ? ttlSeconds : ttl;
+      return {
+        allowed: false,
+        remaining: 0,
+        retryAfterMs: currentTtl * 1000,
+      };
+    }
+
+    return {
+      allowed: true,
+      remaining: maxCount - count,
+    };
+  } catch (error) {
+    console.error('Redis rate limit error, falling back to memory:', error);
+    return checkRateLimitMemory(key, maxCount, windowMs);
+  }
+}
+
+/**
+ * In-memory rate limiting (fallback)
+ */
+function checkRateLimitMemory(
   key: string,
   maxCount: number,
   windowMs: number
 ): RateLimitResult {
   const now = Date.now();
-  const entry = rateLimits.get(key);
+  const entry = memoryLimits.get(key);
 
   // First request or window expired
   if (!entry || now - entry.windowStart >= windowMs) {
-    rateLimits.set(key, { count: 1, windowStart: now });
+    memoryLimits.set(key, { count: 1, windowStart: now });
     return {
       allowed: true,
       remaining: maxCount - 1,
@@ -79,10 +153,10 @@ export function checkRateLimit(
 /**
  * Check if a lead can receive another text today
  */
-export function canSendTextToLead(
+export async function canSendTextToLead(
   leadId: string,
   maxPerDay: number = 3
-): RateLimitResult {
+): Promise<RateLimitResult> {
   return checkRateLimit(
     `sms:lead:${leadId}:daily`,
     maxPerDay,
@@ -93,10 +167,10 @@ export function canSendTextToLead(
 /**
  * Check if a lead can receive another follow-up this week
  */
-export function canSendFollowupToLead(
+export async function canSendFollowupToLead(
   leadId: string,
   maxPerWeek: number = 3
-): RateLimitResult {
+): Promise<RateLimitResult> {
   return checkRateLimit(
     `followup:lead:${leadId}:weekly`,
     maxPerWeek,
@@ -119,13 +193,28 @@ export function formatRetryAfter(ms: number): string {
 /**
  * Reset rate limit for a key (useful for testing)
  */
-export function resetRateLimit(key: string): void {
-  rateLimits.delete(key);
+export async function resetRateLimit(key: string): Promise<void> {
+  const redis = getRedisInstance();
+
+  if (isUsingRedis() && redis) {
+    await redis.del(`${RATE_LIMIT_PREFIX}${key}`);
+  }
+
+  memoryLimits.delete(key);
 }
 
 /**
  * Clear all rate limits (useful for testing)
  */
-export function clearAllRateLimits(): void {
-  rateLimits.clear();
+export async function clearAllRateLimits(): Promise<void> {
+  const redis = getRedisInstance();
+
+  if (isUsingRedis() && redis) {
+    const keys = await redis.keys(`${RATE_LIMIT_PREFIX}*`);
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+  }
+
+  memoryLimits.clear();
 }

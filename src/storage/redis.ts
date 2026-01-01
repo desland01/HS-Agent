@@ -241,6 +241,14 @@ export function isUsingRedis(): boolean {
 }
 
 /**
+ * Get the Redis instance (for rate limiting, etc.)
+ * Returns null if Redis is not connected
+ */
+export function getRedisInstance(): Redis | null {
+  return redis;
+}
+
+/**
  * Deserialize conversation from JSON string
  */
 function deserializeConversation(data: string): ConversationState | undefined {

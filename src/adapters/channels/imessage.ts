@@ -57,7 +57,7 @@ export class IMessageChannel extends BaseChannel {
     // Check rate limit if we have a leadId
     if (leadId) {
       const maxPerDay = this.config.rateLimits?.maxPerLeadPerDay ?? 3;
-      const rateCheck = canSendTextToLead(leadId, maxPerDay);
+      const rateCheck = await canSendTextToLead(leadId, maxPerDay);
 
       if (!rateCheck.allowed) {
         const retryAfter = formatRetryAfter(rateCheck.retryAfterMs || 0);
