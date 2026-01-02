@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Work Tracking
 
-This project uses **Linear** for work tracking. The dev-agent (`dev-agent/`) runs autonomously and processes tasks from Linear.
+This project uses **Linear** for work tracking. The autonomous agent (`agent/`) processes tasks from Linear.
 
 **Linear Workspace:** https://linear.app/grovestreetpainting
 
@@ -13,7 +13,38 @@ This project uses **Linear** for work tracking. The dev-agent (`dev-agent/`) run
 - "Active Work" - In Progress / In Review
 - "Blocked" - Items needing human input
 
-See `AGENTS.md` for workflow instructions.
+## Autonomous Agent
+
+The project includes a Python-based autonomous coding agent in `agent/`:
+
+```bash
+# First run: Creates 50 Linear issues from app_spec.txt
+cd agent
+pip install -r requirements.txt
+python autonomous_agent.py --project-dir ../
+
+# Subsequent runs: Implements issues one by one
+python autonomous_agent.py --project-dir ../
+```
+
+### Agent Architecture
+
+| File | Purpose |
+|------|---------|
+| `autonomous_agent.py` | Entry point, CLI arguments |
+| `agent.py` | Session loop, auto-continue logic |
+| `client.py` | Claude SDK + Linear MCP configuration |
+| `security.py` | Bash command allowlist |
+| `prompts/app_spec.txt` | Application specification (50 issues) |
+| `prompts/initializer_prompt.md` | Creates Linear project & issues |
+| `prompts/coding_prompt.md` | Implements issues one by one |
+
+### Key Patterns
+
+- **Fresh context per session**: New client instance each session prevents context pollution
+- **Two-prompt pattern**: Initializer (once) → Coding (repeated)
+- **Session handoff via Linear**: META issue tracks progress across sessions
+- **Security hooks**: PreToolUse validation for bash commands
 
 ## Key Documentation
 

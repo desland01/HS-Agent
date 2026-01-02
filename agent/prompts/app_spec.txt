@@ -1,0 +1,281 @@
+# Home Service Agent - AI Lead Management Platform
+
+## Product Vision
+
+AI-powered platform that helps home service businesses never miss a lead and close more jobs.
+
+**Problem:** Home service business owners (painters, HVAC, plumbers, roofers) lose 40-60% of leads due to slow response times. They're on job sites, can't answer phones, and leads go cold within minutes.
+
+**Solution:** An autonomous AI system that:
+- Responds to leads instantly (< 5 min)
+- Qualifies prospects using BANT methodology
+- Books appointments without owner involvement
+- Follows up on estimates automatically
+- Provides daily briefings to owners via text
+
+## Target Users
+
+**Primary:** Home Service Business Owner (35-55 years old, 1-20 employees)
+- Industries: Painting, HVAC, Plumbing, Roofing, Electrical, Landscaping
+- Pain Points: Missing leads while on job sites, no time for follow-ups, losing jobs to faster competitors
+
+**Secondary:** Office Manager / Dispatcher
+
+## Core Architecture
+
+```
+Lead Source → Webhook → Orchestrator → Agent → CRM/Messaging
+                              ↓
+                    Conversation State (Redis)
+```
+
+### Tech Stack
+- **Backend**: Node.js/TypeScript with Express
+- **Database**: Redis for conversation state, PostgreSQL for persistence
+- **AI**: Claude API (claude-sonnet-4-5) with streaming support
+- **CRM**: GoHighLevel (primary), PaintScout (estimating)
+- **Messaging**: iMessage (via Cloud Mac), Facebook Messenger, Twilio SMS
+
+### Three Specialized Agents
+
+| Agent | Purpose | Triggers When |
+|-------|---------|---------------|
+| **SDR** | Lead qualification via BANT, booking consultations | status: new, contacted, qualified |
+| **Reminder** | Appointment confirmations, reminders, rescheduling | status: appointment_scheduled |
+| **Follow-up** | Post-estimate nurturing, objection handling, closing | status: estimate_sent, follow_up |
+
+## Primary Features
+
+### SDR Agent
+Autonomous lead qualification using BANT methodology (Budget, Authority, Need, Timeline).
+- Responds within 5 minutes of new lead
+- Asks qualifying questions naturally in conversation
+- Categorizes leads as hot (0-3 months), warm (3-6 months), cool (6+ months)
+- Books appointments for qualified leads
+- Updates CRM with all conversation data
+
+### Reminder Agent
+Appointment management with automated confirmations.
+- Sends 24-hour confirmation message
+- Sends 2-hour reminder message
+- Handles rescheduling requests (offer 3 alternative times)
+- Handles cancellations with owner alerts
+- Updates calendar when rescheduled
+
+### Follow-up Agent
+Post-estimate nurturing with objection handling.
+- Sends first follow-up 2 days after estimate
+- Handles common objections (price, timing, comparison shopping)
+- 3-touch sequence before stopping
+- Escalates hot leads to owner
+- Stops after explicit "no"
+
+### Orchestrator
+Routes inbound messages to appropriate agent based on lead status.
+- Determines current agent from conversation state
+- Handles agent handoffs (e.g., SDR → Reminder after booking)
+- Builds conversation context from history
+- Executes actions (CRM updates, send messages)
+
+### CRM Adapter (GoHighLevel)
+Bi-directional sync with CRM.
+- Create new leads from webhooks
+- Update lead status on state changes
+- Sync conversation logs
+- Search existing contacts
+- Update custom fields (temperature, TCPA consent)
+
+### Channel Adapters
+Multi-channel messaging support.
+- **Facebook Messenger**: Webhook handler for messages, Lead Ads webhook for new leads
+- **iMessage**: Via Cloud Mac service, inbound and outbound
+- **Twilio SMS**: For non-iOS users (fallback)
+
+## Technical Requirements
+
+### Non-Functional Requirements
+| Requirement | Target |
+|-------------|--------|
+| Response Time | < 5 minutes for new leads |
+| Uptime | 99.9% (can't miss overnight/weekend leads) |
+| Message Delivery | 99% delivery rate |
+| Data Retention | 2 years (business records) |
+
+### Security & Compliance
+| Requirement | Implementation |
+|-------------|----------------|
+| TCPA Compliance | Explicit opt-in required, quiet hours (8pm-8am), easy opt-out |
+| Rate Limiting | 3 texts/lead/day, 100 API calls/min |
+| API Key Protection | Environment variables, never in code |
+| PII Handling | No PII in logs, encrypted at rest |
+| Input Validation | Sanitize all user input at system boundaries |
+
+## Database Schema
+
+### Conversations Table
+```sql
+conversations (
+  id UUID PRIMARY KEY,
+  lead_id UUID REFERENCES leads,
+  status LeadStatus,
+  agent_type AgentType,
+  history JSONB,
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP
+)
+```
+
+### Leads Table
+```sql
+leads (
+  id UUID PRIMARY KEY,
+  phone VARCHAR,
+  email VARCHAR,
+  name VARCHAR,
+  source Platform,
+  temperature LeadTemperature,
+  tcpa_consent BOOLEAN,
+  created_at TIMESTAMP
+)
+```
+
+### Appointments Table
+```sql
+appointments (
+  id UUID PRIMARY KEY,
+  lead_id UUID REFERENCES leads,
+  scheduled_at TIMESTAMP,
+  confirmed BOOLEAN,
+  reminded BOOLEAN,
+  notes TEXT
+)
+```
+
+### Messages Table
+```sql
+messages (
+  id UUID PRIMARY KEY,
+  conversation_id UUID REFERENCES conversations,
+  role VARCHAR, -- 'user' | 'assistant'
+  content TEXT,
+  timestamp TIMESTAMP
+)
+```
+
+## Key Types
+
+```typescript
+type LeadStatus =
+  | 'new'
+  | 'contacted'
+  | 'qualified'
+  | 'appointment_scheduled'
+  | 'estimate_sent'
+  | 'follow_up'
+  | 'won'
+  | 'lost';
+
+type LeadTemperature = 'hot' | 'warm' | 'cool';
+
+type AgentType = 'sdr' | 'reminder' | 'followup';
+
+type Platform = 'web' | 'facebook' | 'sms' | 'email';
+```
+
+## API Routes
+
+All endpoints prefixed with `/api/{business-slug}/`:
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/chat/start` | POST | Start new web chat |
+| `/chat/message` | POST | Send/receive chat message |
+| `/lead` | POST | Form submission (create lead) |
+| `/event` | POST | Trigger reminders/follow-ups |
+| `/facebook/webhook` | GET | Facebook verification |
+| `/facebook/webhook` | POST | Facebook messages/leads |
+| `/imessage/inbound` | POST | Receive iMessage replies |
+
+## Implementation Steps (50 Issues)
+
+### Foundation (Priority 1) - Issues 1-4
+1. Project setup with TypeScript, Express, Redis connection
+2. Environment configuration and secrets management (dotenv, validation)
+3. Base conversation state manager (Redis CRUD operations)
+4. Lead status enum and TypeScript types
+
+### SDR Agent (Priority 1) - Issues 5-8
+5. SDR agent prompt with BANT methodology questions
+6. Lead temperature classification logic (hot/warm/cool)
+7. Appointment booking flow (offer times, confirm selection)
+8. CRM integration for lead creation (GoHighLevel API)
+
+### Reminder Agent (Priority 2) - Issues 9-13
+9. Reminder agent prompt (friendly, concise)
+10. 24-hour confirmation scheduler (cron or queue)
+11. 2-hour reminder scheduler
+12. Reschedule handling (parse dates, offer alternatives)
+13. Cancellation handling with owner SMS alert
+
+### Follow-up Agent (Priority 2) - Issues 14-18
+14. Follow-up agent prompt (address objections)
+15. 3-touch sequence logic (timing, escalation)
+16. Objection handling prompts (price, timing, comparison)
+17. Hot lead escalation to owner
+18. Conversation termination logic ("not interested" detection)
+
+### Orchestrator (Priority 1) - Issues 19-22
+19. Message routing by lead status (status → agent mapping)
+20. Agent handoff logic (SDR→Reminder, Reminder→Follow-up)
+21. Conversation context builder (summarize history for agent)
+22. Action execution framework (CRM updates, send messages)
+
+### Channel Adapters (Priority 2) - Issues 23-27
+23. Facebook Messenger webhook handler (verify, receive, respond)
+24. Facebook Lead Ads webhook (parse lead data, create conversation)
+25. iMessage inbound adapter (Cloud Mac webhook)
+26. iMessage outbound adapter (Cloud Mac API call)
+27. Twilio SMS adapter (send/receive, status callbacks)
+
+### CRM Adapter - GoHighLevel (Priority 2) - Issues 28-32
+28. GoHighLevel authentication (OAuth or API key)
+29. Lead sync - create and update operations
+30. Contact search by phone/email
+31. Pipeline stage updates (map LeadStatus to GHL stages)
+32. Custom field mapping (temperature, consent, notes)
+
+### API Routes (Priority 1) - Issues 33-38
+33. POST /api/:business/chat/start - Initialize chat session
+34. POST /api/:business/chat/message - Process chat message
+35. POST /api/:business/lead - Handle form submission
+36. POST /api/:business/event - Trigger scheduled events
+37. GET/POST /api/:business/facebook/webhook - Facebook integration
+38. POST /api/:business/imessage/inbound - iMessage webhook
+
+### Security & Compliance (Priority 1) - Issues 39-43
+39. TCPA consent tracking (store consent, block if missing)
+40. Quiet hours enforcement (8pm-8am, timezone-aware)
+41. Rate limiting per lead (3 texts/day max)
+42. Input sanitization (prevent injection attacks)
+43. API key protection (environment variables, rotation support)
+
+### Testing (Priority 2) - Issues 44-47
+44. Unit tests for orchestrator (routing, handoffs)
+45. Integration tests for SDR agent (mock Claude API)
+46. End-to-end lead flow test (new lead → appointment)
+47. Mock CRM adapter for testing (in-memory implementation)
+
+### Owner Dashboard (Priority 3) - Issues 48-50
+48. Next.js project setup with Tailwind CSS
+49. Lead list view (filterable by status, temperature)
+50. Conversation viewer (real-time updates)
+
+## Success Metrics
+
+| Metric | Target |
+|--------|--------|
+| Lead Response Time | < 5 min |
+| Qualification Rate | > 40% |
+| Appointment Show Rate | > 80% |
+| Estimate Close Rate | > 30% |
+| Owner Time Saved | 10+ hrs/week |
