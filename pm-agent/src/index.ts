@@ -10,6 +10,13 @@ import * as readline from 'readline';
 import { basename, resolve } from 'path';
 import { createPMAgent, setWorkingDirectory, getWorkingDirectory, type PMAgentMessage } from './agent.js';
 import { initializeLinearClient } from './tools/linear-mcp.js';
+import {
+  addMemoryEntry,
+  addSessionInsight,
+  summarizeConversation,
+  getMemoryStats,
+  type MemoryCategory
+} from './memory.js';
 
 // ANSI colors and styles
 const c = {
@@ -87,12 +94,21 @@ ${c.dim}Type /help for commands, /quit to exit${c.reset}
 function printHelp(): void {
   console.log(`
 ${c.bold}Commands${c.reset}
-  ${c.yellow}/clear${c.reset}     Clear conversation
+  ${c.yellow}/clear${c.reset}     Clear conversation (auto-saves insights)
   ${c.yellow}/skills${c.reset}    List available skills
   ${c.yellow}/agents${c.reset}    List sub-agents
   ${c.yellow}/tools${c.reset}     List available tools
   ${c.yellow}/cwd${c.reset}       Show working directory
-  ${c.yellow}/quit${c.reset}      Exit
+  ${c.yellow}/quit${c.reset}      Exit (auto-saves insights)
+
+${c.bold}Memory Commands${c.reset}
+  ${c.yellow}/remember${c.reset}  Save insight to memory
+  ${c.yellow}/memory${c.reset}    Show memory statistics
+
+  Examples:
+    /remember vision: Building multi-tenant SaaS for home services
+    /remember decision: Chose Redis for session state
+    /remember preference: Prefer explicit error handling
 
 ${c.bold}File Operations${c.reset}
   The agent uses Claude Code's built-in file tools:
@@ -200,17 +216,36 @@ async function main(): Promise<void> {
       // Handle commands
       if (trimmed.startsWith('/')) {
         const cmd = trimmed.toLowerCase().split(' ')[0];
+        const cmdArgs = trimmed.slice(cmd.length).trim();
+
+        // Helper to auto-summarize conversation before clearing/exiting
+        const autoSummarize = async (): Promise<void> => {
+          if (agent.hasConversation()) {
+            console.log(`${c.dim}Saving insights...${c.reset}`);
+            try {
+              const insight = await summarizeConversation(agent.getConversationHistory());
+              if (insight) {
+                addSessionInsight(insight.title, insight.content);
+                console.log(`${c.green}✓ Saved: ${insight.title}${c.reset}`);
+              }
+            } catch (error) {
+              // Silently fail - don't block exit/clear
+            }
+          }
+        };
 
         switch (cmd) {
           case '/quit':
           case '/exit':
           case '/q':
+            await autoSummarize();
             console.log(`${c.dim}Goodbye!${c.reset}`);
             rl.close();
             process.exit(0);
             break;
 
           case '/clear':
+            await autoSummarize();
             agent.clearHistory();
             console.clear();
             printCompactHeader();
@@ -237,6 +272,48 @@ async function main(): Promise<void> {
           case '/cwd':
             console.log(`${c.dim}Working directory:${c.reset} ${getWorkingDirectory()}\n`);
             break;
+
+          case '/remember': {
+            // Parse: /remember category: content
+            const match = cmdArgs.match(/^(vision|decisions?|preferences?|history):\s*(.+)$/i);
+            if (!match) {
+              console.log(`${c.yellow}Usage: /remember <category>: <content>${c.reset}`);
+              console.log(`${c.dim}Categories: vision, decision, preference, history${c.reset}\n`);
+              break;
+            }
+
+            // Normalize category name (singular -> plural)
+            const categoryMap: Record<string, MemoryCategory> = {
+              vision: 'vision',
+              decision: 'decisions',
+              decisions: 'decisions',
+              preference: 'preferences',
+              preferences: 'preferences',
+              history: 'history',
+            };
+            const category = categoryMap[match[1].toLowerCase()];
+            const content = match[2].trim();
+            addMemoryEntry(category, content);
+            console.log(`${c.green}✓ Remembered in ${category}${c.reset}\n`);
+            break;
+          }
+
+          case '/memory': {
+            const stats = getMemoryStats();
+            console.log(`\n${c.bold}Memory Statistics${c.reset}`);
+            console.log(`${c.dim}────────────────────${c.reset}`);
+            console.log(`  Total entries: ${c.cyan}${stats.totalEntries}${c.reset}`);
+            console.log(`  Vision & Goals: ${stats.byCategory.vision}`);
+            console.log(`  Decisions: ${stats.byCategory.decisions}`);
+            console.log(`  Preferences: ${stats.byCategory.preferences}`);
+            console.log(`  History: ${stats.byCategory.history}`);
+            console.log(`  Session Insights: ${stats.byCategory.insights}`);
+            if (stats.lastUpdated) {
+              console.log(`  Last updated: ${c.dim}${stats.lastUpdated}${c.reset}`);
+            }
+            console.log(`\n${c.dim}Edit: pm-agent/.claude/memory.md${c.reset}\n`);
+            break;
+          }
 
           default:
             console.log(`${c.yellow}Unknown command: ${cmd}${c.reset}`);

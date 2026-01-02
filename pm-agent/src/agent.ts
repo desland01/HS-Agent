@@ -9,6 +9,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createLinearMcpServer } from './tools/linear-mcp.js';
+import { formatMemoryForPrompt } from './memory.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // SDK standard location: .claude/agents/
@@ -191,7 +192,7 @@ Before finalizing any response, verify:
 - **Don't over-delegate simple questions** (answer directly)
 - **Don't ignore context from earlier in conversation**
 - **Don't give vague answers** ("it depends" → give options instead)
-- **Don't wait to be asked about blockers** (surface them proactively)`;
+- **Don't wait to be asked about blockers** (surface them proactively)${formatMemoryForPrompt()}`;
 }
 
 function buildAgentsConfig(): Record<string, AgentDefinition> {
@@ -390,8 +391,12 @@ export async function chat(userMessage: string, sessionId?: string): Promise<str
  */
 export class PMAgent {
   private sessionId: string | undefined;
+  private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
 
   async chat(userMessage: string): Promise<string> {
+    // Track user message
+    this.conversationHistory.push({ role: 'user', content: userMessage });
+
     let fullResponse = '';
 
     for await (const message of streamPMAgent(userMessage, this.sessionId)) {
@@ -403,18 +408,34 @@ export class PMAgent {
       }
     }
 
+    // Track assistant response
+    if (fullResponse) {
+      this.conversationHistory.push({ role: 'assistant', content: fullResponse });
+    }
+
     return fullResponse;
   }
 
   async *streamChat(userMessage: string): AsyncGenerator<PMAgentMessage, string, undefined> {
+    // Track user message
+    this.conversationHistory.push({ role: 'user', content: userMessage });
+
     const generator = streamPMAgent(userMessage, this.sessionId);
+    let fullResponse = '';
 
     for await (const message of generator) {
       // Capture session ID for multi-turn conversation persistence
       if (message.type === 'session') {
         this.sessionId = message.sessionId;
+      } else if (message.type === 'text') {
+        fullResponse += message.content;
       }
       yield message;
+    }
+
+    // Track assistant response
+    if (fullResponse) {
+      this.conversationHistory.push({ role: 'assistant', content: fullResponse });
     }
 
     return '';
@@ -423,10 +444,25 @@ export class PMAgent {
   clearHistory(): void {
     // Start a new session by clearing the session ID
     this.sessionId = undefined;
+    this.conversationHistory = [];
   }
 
   getSessionId(): string | undefined {
     return this.sessionId;
+  }
+
+  /**
+   * Get conversation history for summarization
+   */
+  getConversationHistory(): Array<{ role: 'user' | 'assistant'; content: string }> {
+    return [...this.conversationHistory];
+  }
+
+  /**
+   * Check if there's meaningful conversation to summarize
+   */
+  hasConversation(): boolean {
+    return this.conversationHistory.length >= 2;
   }
 }
 
