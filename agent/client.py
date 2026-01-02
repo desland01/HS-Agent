@@ -10,82 +10,70 @@ Configures:
 import os
 from typing import Any, Dict, Optional
 
-from claude_code_sdk import ClaudeCodeClient, Options, MCPServer, Hook
+from claude_code_sdk import ClaudeCodeOptions, ClaudeSDKClient, HookMatcher
 
 from security import is_command_allowed, get_allowed_commands_list
 
 
-def create_mcp_servers() -> Dict[str, MCPServer]:
+async def validate_bash_hook(input_data: Dict[str, Any], tool_use_id: str, context: Any) -> Dict[str, Any]:
     """
-    Create MCP server configurations.
+    PreToolUse hook to validate bash commands.
 
-    Linear MCP is connected via HTTP transport to linear.app's official server.
+    Returns:
+        Empty dict to allow, or permission denial dict to block.
+    """
+    tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {})
+
+    if tool_name != "Bash":
+        return {}  # Allow non-bash tools
+
+    command = tool_input.get("command", "")
+    if not command:
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Empty command not allowed",
+            }
+        }
+
+    is_allowed, reason = is_command_allowed(command)
+    if not is_allowed:
+        allowed_cmds = ", ".join(get_allowed_commands_list())
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": f"Command blocked: {reason}. Allowed: {allowed_cmds}",
+            }
+        }
+
+    return {}  # Allow the command
+
+
+def create_options(
+    project_dir: str,
+    model: str = "claude-sonnet-4-20250514"
+) -> ClaudeCodeOptions:
+    """
+    Create Claude Code options with MCP servers and hooks.
     """
     linear_api_key = os.environ.get("LINEAR_API_KEY", "")
 
-    servers = {}
+    # MCP servers configuration
+    mcp_servers = {}
 
-    # Linear MCP via HTTP transport (official Linear MCP server)
     if linear_api_key:
-        servers["linear"] = MCPServer(
-            transport="http",
-            url="https://mcp.linear.app/mcp",
-            headers={
+        # Linear MCP via HTTP transport
+        mcp_servers["linear"] = {
+            "type": "http",
+            "url": "https://mcp.linear.app/mcp",
+            "headers": {
                 "Authorization": f"Bearer {linear_api_key}",
                 "Content-Type": "application/json"
             }
-        )
-
-    return servers
-
-
-def create_security_hooks() -> list:
-    """
-    Create security hooks to validate tool usage.
-
-    PreToolUse hook for Bash commands:
-    - Validates commands against allowlist
-    - Blocks dangerous operations
-    """
-
-    def validate_bash_command(tool_name: str, tool_input: Dict[str, Any]) -> Optional[str]:
-        """
-        Validate bash commands before execution.
-
-        Returns None to allow, or error message to block.
-        """
-        if tool_name != "Bash":
-            return None  # Allow non-bash tools
-
-        command = tool_input.get("command", "")
-        if not command:
-            return "Empty command not allowed"
-
-        is_allowed, reason = is_command_allowed(command)
-        if not is_allowed:
-            return f"Command blocked: {reason}. Allowed commands: {', '.join(get_allowed_commands_list())}"
-
-        return None  # Allow the command
-
-    return [
-        Hook(
-            event="PreToolUse",
-            handler=validate_bash_command
-        )
-    ]
-
-
-def create_client(
-    project_dir: str,
-    model: str = "claude-sonnet-4-20250514"
-) -> ClaudeCodeClient:
-    """
-    Create a configured Claude Code client.
-
-    Each session should create a fresh client to prevent context pollution.
-    """
-    mcp_servers = create_mcp_servers()
-    hooks = create_security_hooks()
+        }
 
     # Define allowed tools
     allowed_tools = [
@@ -97,13 +85,8 @@ def create_client(
         "Grep",
         "LS",
 
-        # Shell (with security validation)
+        # Shell (with security validation via hook)
         "Bash",
-
-        # Git operations
-        "GitDiff",
-        "GitLog",
-        "GitStatus",
 
         # Task management
         "TodoWrite",
@@ -119,16 +102,34 @@ def create_client(
         "mcp__linear__create_project",
         "mcp__linear__create_comment",
         "mcp__linear__list_issue_statuses",
+        "mcp__linear__list_issue_labels",
+        "mcp__linear__create_issue_label",
     ]
 
-    options = Options(
+    # Security hooks
+    hooks = {
+        "PreToolUse": [
+            HookMatcher(matcher="Bash", hooks=[validate_bash_hook]),
+        ],
+    }
+
+    return ClaudeCodeOptions(
         model=model,
         cwd=project_dir,
         allowed_tools=allowed_tools,
         mcp_servers=mcp_servers,
         hooks=hooks,
-        # Enable streaming for real-time output
-        include_partial_messages=True,
     )
 
-    return ClaudeCodeClient(options=options)
+
+def create_client(
+    project_dir: str,
+    model: str = "claude-sonnet-4-20250514"
+) -> ClaudeSDKClient:
+    """
+    Create a configured Claude SDK client.
+
+    Each session should create a fresh client to prevent context pollution.
+    """
+    options = create_options(project_dir=project_dir, model=model)
+    return ClaudeSDKClient(options=options)

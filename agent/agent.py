@@ -9,11 +9,16 @@ Manages the autonomous agent loop:
 """
 
 import asyncio
-import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
-from claude_code_sdk import ClaudeCodeSession, query
+from claude_code_sdk import (
+    AssistantMessage,
+    TextBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+    ResultMessage,
+)
 
 from client import create_client
 from linear_config import LINEAR_PROJECT_MARKER
@@ -55,22 +60,31 @@ async def run_agent_session(
 
     try:
         async with client:
-            async for message in query(prompt=prompt, options=client.options):
-                if message.type == "text":
-                    print(message.content, end="", flush=True)
-                    full_response.append(message.content)
-                elif message.type == "tool_use":
-                    tool_name = message.tool_name
-                    print(f"\n[Tool: {tool_name}]", end="", flush=True)
-                elif message.type == "tool_result":
-                    # Show abbreviated result
-                    result_preview = str(message.result)[:100]
-                    if len(str(message.result)) > 100:
-                        result_preview += "..."
-                    print(f" -> {result_preview}", flush=True)
-                elif message.type == "error":
-                    print(f"\n[Error: {message.error}]", flush=True)
-                    return ("error", message.error)
+            # Send the prompt
+            await client.query(prompt)
+
+            # Receive and process the response
+            async for message in client.receive_response():
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            print(block.text, end="", flush=True)
+                            full_response.append(block.text)
+                        elif isinstance(block, ToolUseBlock):
+                            print(f"\n[Tool: {block.name}]", end="", flush=True)
+                        elif isinstance(block, ToolResultBlock):
+                            # Show abbreviated result
+                            result_str = str(block.content) if block.content else ""
+                            result_preview = result_str[:100]
+                            if len(result_str) > 100:
+                                result_preview += "..."
+                            print(f" -> {result_preview}", flush=True)
+
+                elif isinstance(message, ResultMessage):
+                    # Final result message
+                    if hasattr(message, 'error') and message.error:
+                        print(f"\n[Error: {message.error}]", flush=True)
+                        return ("error", str(message.error))
 
         return ("success", "".join(full_response))
 
