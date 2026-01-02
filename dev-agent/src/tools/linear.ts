@@ -483,6 +483,135 @@ ${args.summary}
       }
     ),
 
+    // Structured escalation for detailed blocker reports
+    tool(
+      'structured_escalation',
+      'Create a detailed blocker report with structured context. Use for complex issues requiring human decision or debugging assistance.',
+      {
+        issueId: z.string().describe('The Linear issue ID or identifier'),
+        blockerType: z.enum(['technical', 'requirements', 'security', 'architecture', 'external'])
+          .describe('Type of blocker: technical (build/runtime), requirements (unclear spec), security (needs approval), architecture (design decision), external (third-party)'),
+        summary: z.string().max(100).describe('One-line summary of the blocker (max 100 chars)'),
+        context: z.object({
+          attempted: z.array(z.string()).min(1).max(5)
+            .describe('List of approaches tried (1-5 items)'),
+          errorDetails: z.string().optional()
+            .describe('Specific error message or stack trace'),
+          filesInvolved: z.array(z.string()).optional()
+            .describe('File paths relevant to the issue'),
+          hypothesis: z.string().optional()
+            .describe('What you think the root cause might be'),
+          suggestedNextSteps: z.array(z.string()).optional()
+            .describe('Possible solutions with pros/cons')
+        }).describe('Structured context for the blocker'),
+        urgency: z.enum(['low', 'medium', 'high', 'critical']).default('medium')
+          .describe('Urgency: low (not blocking), medium (blocking this task), high (blocking multiple tasks), critical (production issue)')
+      },
+      async (args) => {
+        try {
+          const issue = await linearClient.issue(args.issueId);
+          if (!issue) {
+            return {
+              content: [{ type: 'text', text: `Issue ${args.issueId} not found` }],
+              isError: true
+            };
+          }
+
+          // Map urgency to priority
+          const priorityMap = { critical: 1, high: 2, medium: 3, low: 4 };
+          const priority = priorityMap[args.urgency];
+
+          // Build structured markdown comment
+          const urgencyEmoji = {
+            critical: '!!!',
+            high: '!!',
+            medium: '!',
+            low: '-'
+          }[args.urgency];
+
+          let commentBody = `## ${urgencyEmoji} Blocker Report: ${args.blockerType.toUpperCase()}
+
+### Summary
+${args.summary}
+
+### What I Tried`;
+
+          args.context.attempted.forEach((attempt, i) => {
+            commentBody += `\n${i + 1}. ${attempt}`;
+          });
+
+          if (args.context.errorDetails) {
+            commentBody += `\n\n### Error Details\n\`\`\`\n${args.context.errorDetails}\n\`\`\``;
+          }
+
+          if (args.context.filesInvolved && args.context.filesInvolved.length > 0) {
+            commentBody += `\n\n### Files Involved`;
+            args.context.filesInvolved.forEach(f => {
+              commentBody += `\n- \`${f}\``;
+            });
+          }
+
+          if (args.context.hypothesis) {
+            commentBody += `\n\n### Root Cause Hypothesis\n${args.context.hypothesis}`;
+          }
+
+          if (args.context.suggestedNextSteps && args.context.suggestedNextSteps.length > 0) {
+            commentBody += `\n\n### Suggested Next Steps`;
+            args.context.suggestedNextSteps.forEach((step, i) => {
+              commentBody += `\n${i + 1}. ${step}`;
+            });
+          }
+
+          commentBody += `\n\n### Urgency
+- **Level:** ${args.urgency.toUpperCase()}
+- **Type:** ${args.blockerType}
+
+---
+*Escalated by dev-agent*`;
+
+          // Add the structured comment
+          await linearClient.createComment({
+            issueId: issue.id,
+            body: commentBody
+          });
+
+          // Update issue priority
+          await linearClient.updateIssue(issue.id, {
+            priority
+          });
+
+          // Get team to find blocked state if it exists
+          const team = await issue.team;
+          const states = await team?.states();
+          const blockedState = states?.nodes.find(
+            s => s.name.toLowerCase().includes('blocked')
+          );
+
+          // If blocked state exists, move issue there
+          if (blockedState) {
+            await linearClient.updateIssue(issue.id, {
+              stateId: blockedState.id
+            });
+          }
+
+          return {
+            content: [{
+              type: 'text',
+              text: `Blocker report created for ${args.issueId}:\n- Type: ${args.blockerType}\n- Urgency: ${args.urgency}\n- Summary: ${args.summary}${blockedState ? '\n- Moved to Blocked state' : ''}`
+            }]
+          };
+        } catch (error: any) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Error creating blocker report: ${error.message}`
+            }],
+            isError: true
+          };
+        }
+      }
+    ),
+
     // Search issues (more targeted than list)
     tool(
       'search_issues',

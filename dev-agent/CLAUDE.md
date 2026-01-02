@@ -71,6 +71,68 @@ When implementing a Linear task, follow this workflow:
 - Small, focused functions
 - Handle edge cases
 
+## Feature Development Workflow
+
+Before implementing any feature, follow this structured approach:
+
+1. **Explore First** - Use explorer to find similar implementations, trace execution paths, understand patterns
+2. **Consider Alternatives** - Use thinker for 2-3 architecture approaches with trade-offs:
+   - Minimal changes (smallest change, max reuse)
+   - Clean architecture (maintainability, elegance)
+   - Pragmatic balance (speed + quality)
+3. **Match Patterns** - Implementation must follow existing codebase conventions
+4. **Self-Review** - Check for bugs, security, conventions before committing
+
+## UI Development Standards
+
+When building frontend interfaces (dashboard, web chat, etc.):
+
+- **Typography**: Use distinctive fonts (avoid Inter, Roboto, Arial, system fonts)
+- **Colors**: Commit to bold aesthetic, avoid purple gradients on white (cliched)
+- **Motion**: Staggered reveals, scroll-triggered animations, meaningful hover states
+- **Layout**: Asymmetry over grids, generous negative space or controlled density
+- **Backgrounds**: Gradient meshes, noise textures, layered transparencies
+
+**NEVER produce generic AI aesthetics.** Each UI should be distinctive and memorable.
+
+React patterns:
+- Functional components with hooks
+- TypeScript strict mode
+- Tailwind for styling
+- Motion library for animations
+
+## Security Checklist
+
+Before committing, verify:
+- [ ] No command injection (user input in shell commands)
+- [ ] No XSS (user input in HTML/JS output)
+- [ ] No SQL injection (use parameterized queries)
+- [ ] No hardcoded secrets (use environment variables)
+- [ ] Input validation at system boundaries
+- [ ] Proper error handling (no sensitive data in error messages)
+- [ ] Rate limiting on public endpoints
+- [ ] TCPA compliance for messaging (explicit opt-in, quiet hours)
+
+## Self-Review Before Shipping
+
+Before running ship subagent, check for:
+
+**Bugs & Logic**:
+- Silent failures (swallowed errors, empty catch blocks)
+- Null/undefined issues
+- Edge cases (empty arrays, boundary conditions)
+- Race conditions
+
+**Type Design**:
+- Weak typing (avoid `any`)
+- Missing generics
+- Incomplete interfaces
+
+**Quality**:
+- Code duplication
+- Test coverage for new code
+- Comment accuracy (comments match behavior)
+
 ## Git Workflow
 
 - Never commit directly to main
@@ -81,10 +143,12 @@ When implementing a Linear task, follow this workflow:
 ## Environment Variables
 
 Required on Railway:
-- `ANTHROPIC_API_KEY` - Claude API
 - `LINEAR_API_KEY` - Linear API
 - `GITHUB_TOKEN` - GitHub PAT for PRs
 - `GITHUB_REPO_URL` - Repository to clone
+
+Optional:
+- `ANTHROPIC_API_KEY` - Claude API (not needed with Claude Max subscription)
 
 ## Error Handling
 

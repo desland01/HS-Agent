@@ -4,9 +4,9 @@
  * This autonomous agent runs 24/7 on Railway, pulling tasks from Linear
  * and implementing them in the Home Service SaaS codebase.
  *
- * Environment Variables Required:
- * - ANTHROPIC_API_KEY: Claude API key
- * - LINEAR_API_KEY: Linear API key
+ * Environment Variables:
+ * - ANTHROPIC_API_KEY: Claude API key (optional with Claude Max subscription)
+ * - LINEAR_API_KEY: Linear API key (required)
  * - WORKING_DIRECTORY: Path to the cloned repository (default: /app/repo)
  * - GITHUB_TOKEN: For creating PRs (used by gh CLI)
  */
@@ -14,7 +14,9 @@
 import { runAgent } from './agent.js';
 
 // Validate required environment variables
-const requiredEnvVars = ['ANTHROPIC_API_KEY', 'LINEAR_API_KEY'];
+// Note: ANTHROPIC_API_KEY is optional when using Claude Max subscription
+// The Claude Agent SDK will use your authenticated session automatically
+const requiredEnvVars = ['LINEAR_API_KEY'];
 const missingVars = requiredEnvVars.filter(v => !process.env[v]);
 
 if (missingVars.length > 0) {

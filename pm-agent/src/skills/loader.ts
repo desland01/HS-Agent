@@ -92,7 +92,7 @@ export function loadSkillsMetadata(): SkillMetadata[] {
   const skills: SkillMetadata[] = [];
 
   if (!existsSync(SKILLS_DIR)) {
-    console.warn(`Skills directory not found: ${SKILLS_DIR}`);
+    // Silently return - don't interfere with readline
     return skills;
   }
 
@@ -107,8 +107,8 @@ export function loadSkillsMetadata(): SkillMetadata[] {
         const content = readFileSync(skillPath, 'utf-8');
         const metadata = parseSkillMetadata(content, skillPath);
         skills.push(metadata);
-      } catch (error) {
-        console.warn(`Failed to load skill from ${skillPath}:`, error);
+      } catch {
+        // Skip invalid skills silently
       }
     }
   }
@@ -136,8 +136,7 @@ export function loadSkillContent(skillName: string): Skill | null {
       ...metadata,
       content,
     };
-  } catch (error) {
-    console.warn(`Failed to load skill content from ${metadata.path}:`, error);
+  } catch {
     return null;
   }
 }
@@ -159,8 +158,8 @@ export function loadSkillReferences(skillName: string): Skill | null {
     if (existsSync(refPath)) {
       try {
         references.set(refFile, readFileSync(refPath, 'utf-8'));
-      } catch (error) {
-        console.warn(`Failed to load reference file ${refPath}:`, error);
+      } catch {
+        // Skip missing references silently
       }
     }
   }

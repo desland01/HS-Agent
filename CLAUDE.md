@@ -115,3 +115,39 @@ Optional:
 - Agent responses include `actions[]` for side effects (CRM updates, SMS)
 - Texting requires explicit `textingConsent: true` on lead record (TCPA compliance)
 - Rate limiting: 3 texts/lead/day, quiet hours 8pm-8am
+
+## Recommended Plugins
+
+When working on this project with Claude Code, these plugins enhance development:
+
+| Plugin | Purpose | When to Use |
+|--------|---------|-------------|
+| **feature-dev** | Structured feature development | Complex multi-file features |
+| **frontend-design** | Distinctive UI design | Dashboard, web components |
+| **pr-review-toolkit** | Code review, security analysis | Before PRs |
+| **context7** | Library documentation lookup | Unfamiliar APIs |
+| **commit-commands** | Streamlined git workflow | /commit, /commit-push-pr |
+
+### UI Development Standards
+
+When building frontend interfaces (dashboard, web chat, etc.):
+
+- **Typography**: Use distinctive fonts (avoid Inter, Roboto, Arial, system fonts)
+- **Colors**: Commit to bold aesthetic, avoid purple gradients on white (cliched)
+- **Motion**: Staggered reveals, scroll-triggered animations, meaningful hover states
+- **Layout**: Asymmetry over grids, generous negative space or controlled density
+- **Backgrounds**: Gradient meshes, noise textures, layered transparencies
+
+**NEVER produce generic AI aesthetics.** Each UI should be distinctive and memorable.
+
+### Security Checklist
+
+Before committing, verify:
+- [ ] No command injection (user input in shell commands)
+- [ ] No XSS (user input in HTML/JS output)
+- [ ] No SQL injection (use parameterized queries)
+- [ ] No hardcoded secrets (use environment variables)
+- [ ] Input validation at system boundaries
+- [ ] Proper error handling (no sensitive data in error messages)
+- [ ] Rate limiting on public endpoints
+- [ ] TCPA compliance for messaging (explicit opt-in, quiet hours)

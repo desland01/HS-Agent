@@ -31,6 +31,17 @@ restartPolicyMaxRetries = 5
 # Non-sensitive defaults
 NODE_ENV = "production"
 WORKING_DIRECTORY = "/app/repo"
+DATA_DIR = "/app/data"
 
 # Logging
 LOG_LEVEL = "info"
+
+# Persistent volume for learning data (patterns, corrections)
+# Configure in Railway dashboard:
+# 1. Go to Service Settings > Volumes
+# 2. Add volume with mount path: /app/data
+# 3. Recommended size: 1GB (stores JSON files)
+#
+# This persists:
+# - patterns.json: Successful implementation patterns
+# - corrections.json: Human review feedback for learning

@@ -9,6 +9,9 @@ dist/
 .env.local
 .env.*.local
 
+# MCP configuration (contains API keys)
+.mcp.json
+
 # Logs
 *.log
 npm-debug.log*

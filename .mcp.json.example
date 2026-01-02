@@ -1,0 +1,47 @@
+{
+  "mcpServers": {
+    "gemini": {
+      "command": "npx",
+      "args": ["-y", "gemini-mcp-tool"],
+      "env": {
+        "GEMINI_API_KEY": "your-gemini-api-key",
+        "ENABLE_GEMINI_TOOLS": "true",
+        "ENABLE_CODE_EXECUTION": "true",
+        "ENABLE_GOOGLE_SEARCH": "true"
+      }
+    },
+    "firecrawl": {
+      "command": "npx",
+      "args": ["-y", "firecrawl-mcp"],
+      "env": {
+        "FIRECRAWL_API_KEY": "your-firecrawl-api-key"
+      }
+    },
+    "perplexity": {
+      "command": "npx",
+      "args": ["-y", "@perplexity-ai/mcp-server"],
+      "env": {
+        "PERPLEXITY_API_KEY": "your-perplexity-api-key"
+      }
+    },
+    "nano-banana": {
+      "command": "npx",
+      "args": ["-y", "nano-banana-mcp"],
+      "env": {
+        "GEMINI_API_KEY": "your-gemini-api-key"
+      }
+    },
+    "ref": {
+      "type": "http",
+      "url": "https://api.ref.tools/mcp?apiKey=your-ref-api-key"
+    },
+    "dataforseo": {
+      "command": "npx",
+      "args": ["-y", "dataforseo-mcp-server"],
+      "env": {
+        "DATAFORSEO_LOGIN": "your-email",
+        "DATAFORSEO_PASSWORD": "your-password"
+      }
+    }
+  }
+}

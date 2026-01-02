@@ -39,13 +39,21 @@ RUN npm run build
 # Create directory for cloned repo
 RUN mkdir -p /app/repo
 
+# Create directory for persistent data (patterns, corrections)
+RUN mkdir -p /app/data
+
 # Set environment variables
 ENV NODE_ENV=production
 ENV WORKING_DIRECTORY=/app/repo
+ENV DATA_DIR=/app/data
 
 # Health check - verify the agent process is running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD pgrep -f "node dist/index.js" || exit 1
+
+# Declare volume for persistent data (patterns, corrections, feedback)
+# This will be mounted by Railway to persist learning across deployments
+VOLUME ["/app/data"]
 
 # Entrypoint script to setup repo and run agent
 COPY scripts/entrypoint.sh /entrypoint.sh

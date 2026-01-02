@@ -14,6 +14,26 @@ import { formatMemoryForPrompt } from './memory.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // SDK standard location: .claude/agents/
 const AGENTS_DIR = join(__dirname, '../.claude/agents');
+const SKILLS_DIR = join(__dirname, '../.claude/skills');
+
+/**
+ * Load project context from skill file
+ */
+function loadProjectContext(): string {
+  const skillPath = join(SKILLS_DIR, 'project-context/SKILL.md');
+  if (!existsSync(skillPath)) {
+    return '';
+  }
+
+  try {
+    const content = readFileSync(skillPath, 'utf-8');
+    // Remove YAML frontmatter
+    const withoutFrontmatter = content.replace(/^---[\s\S]*?---\n*/m, '');
+    return `\n\n${withoutFrontmatter}`;
+  } catch {
+    return '';
+  }
+}
 
 // Model configurations for different agent types
 export const MODELS = {
@@ -192,7 +212,7 @@ Before finalizing any response, verify:
 - **Don't over-delegate simple questions** (answer directly)
 - **Don't ignore context from earlier in conversation**
 - **Don't give vague answers** ("it depends" → give options instead)
-- **Don't wait to be asked about blockers** (surface them proactively)${formatMemoryForPrompt()}`;
+- **Don't wait to be asked about blockers** (surface them proactively)${loadProjectContext()}${formatMemoryForPrompt()}`;
 }
 
 function buildAgentsConfig(): Record<string, AgentDefinition> {

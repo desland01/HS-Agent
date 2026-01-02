@@ -1,0 +1,328 @@
+@import './design-tokens.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Global Styles
+ *
+ * Base layer styles and utility classes for the home service SaaS.
+ */
+
+@layer base {
+  /* Custom scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.navy.300') transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: theme('colors.navy.300');
+    border-radius: 9999px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: theme('colors.navy.400');
+  }
+
+  /* Dark scrollbar */
+  .dark *::-webkit-scrollbar-thumb {
+    background-color: theme('colors.navy.600');
+  }
+
+  .dark *::-webkit-scrollbar-thumb:hover {
+    background-color: theme('colors.navy.500');
+  }
+
+  /* Focus states */
+  *:focus-visible {
+    outline: 2px solid theme('colors.accent.500');
+    outline-offset: 2px;
+  }
+
+  /* Selection */
+  ::selection {
+    background-color: theme('colors.accent.200');
+    color: theme('colors.navy.900');
+  }
+
+  /* Base HTML */
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply font-body text-navy-900 bg-navy-50;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+
+  /* Typography */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-semibold tracking-tight text-navy-900;
+  }
+
+  h1 {
+    @apply text-4xl md:text-5xl leading-tight;
+  }
+
+  h2 {
+    @apply text-3xl md:text-4xl leading-tight;
+  }
+
+  h3 {
+    @apply text-2xl md:text-3xl leading-snug;
+  }
+
+  h4 {
+    @apply text-xl md:text-2xl leading-snug;
+  }
+
+  h5 {
+    @apply text-lg md:text-xl leading-normal;
+  }
+
+  h6 {
+    @apply text-base md:text-lg leading-normal;
+  }
+
+  /* Links */
+  a {
+    @apply text-accent-600 hover:text-accent-700 transition-colors;
+  }
+
+  /* Form elements */
+  input,
+  textarea,
+  select {
+    @apply font-body;
+  }
+
+  /* Remove number input spinners */
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer components {
+  /* Glass morphism effect */
+  .glass {
+    @apply bg-white/80 backdrop-blur-lg border border-white/20;
+  }
+
+  .glass-dark {
+    @apply bg-navy-900/80 backdrop-blur-lg border border-navy-700/50;
+  }
+
+  /* Card variants */
+  .card {
+    @apply bg-white rounded-xl border border-navy-100 shadow-sm;
+  }
+
+  .card-hover {
+    @apply card transition-all duration-200 hover:shadow-md hover:border-navy-200 hover:-translate-y-0.5;
+  }
+
+  .card-interactive {
+    @apply card-hover cursor-pointer active:translate-y-0 active:shadow-sm;
+  }
+
+  /* Button base styles */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent-500 text-white hover:bg-accent-600 focus-visible:ring-accent-500 active:bg-accent-700;
+  }
+
+  .btn-secondary {
+    @apply btn bg-navy-100 text-navy-700 hover:bg-navy-200 focus-visible:ring-navy-500 active:bg-navy-300;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-navy-600 hover:bg-navy-100 focus-visible:ring-navy-500 active:bg-navy-200;
+  }
+
+  .btn-danger {
+    @apply btn bg-danger-500 text-white hover:bg-danger-600 focus-visible:ring-danger-500 active:bg-danger-700;
+  }
+
+  .btn-outline {
+    @apply btn bg-transparent border border-navy-200 text-navy-700 hover:bg-navy-50 focus-visible:ring-navy-500;
+  }
+
+  /* Size variants */
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  .btn-lg {
+    @apply px-6 py-3 text-base;
+  }
+
+  .btn-icon {
+    @apply p-2.5;
+  }
+
+  .btn-icon-sm {
+    @apply p-1.5;
+  }
+
+  /* Input styles */
+  .input {
+    @apply w-full px-4 py-2.5 bg-white border border-navy-200 rounded-lg text-navy-900 placeholder:text-navy-400 focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20 transition-all duration-200;
+  }
+
+  .input-error {
+    @apply input border-danger-500 focus:border-danger-500 focus:ring-danger-500/20;
+  }
+
+  /* Label styles */
+  .label {
+    @apply block text-sm font-medium text-navy-700 mb-1.5;
+  }
+
+  /* Badge styles */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-neutral {
+    @apply badge bg-navy-100 text-navy-700;
+  }
+
+  .badge-success {
+    @apply badge bg-success-100 text-success-700;
+  }
+
+  .badge-warning {
+    @apply badge bg-warning-100 text-warning-700;
+  }
+
+  .badge-danger {
+    @apply badge bg-danger-100 text-danger-700;
+  }
+
+  .badge-accent {
+    @apply badge bg-accent-100 text-accent-700;
+  }
+
+  /* Status dots */
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-dot-success {
+    @apply status-dot bg-success-500;
+  }
+
+  .status-dot-warning {
+    @apply status-dot bg-warning-500;
+  }
+
+  .status-dot-danger {
+    @apply status-dot bg-danger-500;
+  }
+
+  .status-dot-neutral {
+    @apply status-dot bg-navy-400;
+  }
+
+  /* Skeleton loading */
+  .skeleton {
+    @apply bg-navy-200 animate-pulse rounded;
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-gradient-to-r from-accent-500 to-accent-600 bg-clip-text text-transparent;
+  }
+
+  /* Divider */
+  .divider {
+    @apply h-px bg-navy-100;
+  }
+
+  .divider-vertical {
+    @apply w-px bg-navy-100 self-stretch;
+  }
+}
+
+@layer utilities {
+  /* Animation delays */
+  .animation-delay-100 {
+    animation-delay: 100ms;
+  }
+
+  .animation-delay-200 {
+    animation-delay: 200ms;
+  }
+
+  .animation-delay-300 {
+    animation-delay: 300ms;
+  }
+
+  .animation-delay-400 {
+    animation-delay: 400ms;
+  }
+
+  .animation-delay-500 {
+    animation-delay: 500ms;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Text balance */
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Gradient backgrounds */
+  .bg-gradient-subtle {
+    @apply bg-gradient-to-br from-navy-50 via-white to-accent-50/30;
+  }
+
+  .bg-gradient-mesh {
+    background:
+      radial-gradient(at 40% 20%, theme('colors.accent.100') 0px, transparent 50%),
+      radial-gradient(at 80% 0%, theme('colors.navy.100') 0px, transparent 50%),
+      radial-gradient(at 0% 50%, theme('colors.accent.50') 0px, transparent 50%),
+      radial-gradient(at 80% 50%, theme('colors.navy.50') 0px, transparent 50%),
+      radial-gradient(at 0% 100%, theme('colors.accent.100') 0px, transparent 50%);
+  }
+
+  /* Safe area padding for mobile */
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}
