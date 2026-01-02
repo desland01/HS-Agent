@@ -233,7 +233,8 @@ export type PMAgentMessage =
   | { type: 'thinking'; status: string }
   | { type: 'subagent_start'; agentName: string }
   | { type: 'subagent_end'; agentName: string }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string }
+  | { type: 'session'; sessionId: string };
 
 /**
  * Extract text content from SDK message content blocks
@@ -306,6 +307,8 @@ export async function* streamPMAgent(
       case 'system':
         if (message.subtype === 'init') {
           currentSessionId = message.session_id;
+          // Emit session ID so PMAgent class can capture it for multi-turn conversations
+          yield { type: 'session', sessionId: message.session_id };
           yield { type: 'thinking', status: 'Thinking...' };
         }
         break;
@@ -392,7 +395,10 @@ export class PMAgent {
     let fullResponse = '';
 
     for await (const message of streamPMAgent(userMessage, this.sessionId)) {
-      if (message.type === 'text') {
+      // Capture session ID for multi-turn conversation persistence
+      if (message.type === 'session') {
+        this.sessionId = message.sessionId;
+      } else if (message.type === 'text') {
         fullResponse += message.content;
       }
     }
@@ -404,7 +410,10 @@ export class PMAgent {
     const generator = streamPMAgent(userMessage, this.sessionId);
 
     for await (const message of generator) {
-      // Capture session ID from init message (handled internally by SDK)
+      // Capture session ID for multi-turn conversation persistence
+      if (message.type === 'session') {
+        this.sessionId = message.sessionId;
+      }
       yield message;
     }
 

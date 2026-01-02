@@ -261,6 +261,10 @@ async function main(): Promise<void> {
 
         function handleMessage(message: PMAgentMessage): void {
           switch (message.type) {
+            case 'session':
+              // Internal message for session tracking - no output needed
+              break;
+
             case 'thinking':
               if (!hasStartedOutput) {
                 process.stdout.write(`\n${c.dim}${message.status}${c.reset}`);
