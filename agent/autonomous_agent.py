@@ -52,6 +52,11 @@ def main():
         action="store_true",
         help="Only run initialization (create Linear issues), then exit"
     )
+    parser.add_argument(
+        "--skip-init",
+        action="store_true",
+        help="Skip initialization, go straight to coding mode (for cloud deployment)"
+    )
 
     args = parser.parse_args()
 
@@ -78,11 +83,13 @@ def main():
     print(f"Model: {args.model}")
     print(f"Max iterations: {args.max_iterations}")
 
-    # Check if this is first run
+    # Check if this is first run (unless --skip-init is set)
     marker_file = project_dir / LINEAR_PROJECT_MARKER
-    is_first_run = not marker_file.exists()
+    is_first_run = not marker_file.exists() and not args.skip_init
 
-    if is_first_run:
+    if args.skip_init:
+        print("\nSkip-init mode - going straight to coding (for cloud deployment)")
+    elif is_first_run:
         print("\nFirst run detected - will create Linear issues from app_spec.txt")
     else:
         print("\nContinuing development - will pick up next Todo issue")
@@ -96,7 +103,8 @@ def main():
                 project_dir=str(project_dir),
                 model=args.model,
                 max_iterations=args.max_iterations,
-                init_only=args.init_only
+                init_only=args.init_only,
+                skip_init=args.skip_init
             )
         )
     except KeyboardInterrupt:

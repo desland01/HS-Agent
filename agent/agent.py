@@ -98,7 +98,8 @@ async def run_autonomous_agent(
     project_dir: str,
     model: str,
     max_iterations: int = 100,
-    init_only: bool = False
+    init_only: bool = False,
+    skip_init: bool = False
 ) -> None:
     """
     Run the autonomous agent loop.
@@ -108,9 +109,14 @@ async def run_autonomous_agent(
 
     On subsequent runs:
         Uses coding prompt to pick up and implement highest-priority Todo issue
+
+    Args:
+        skip_init: If True, skip initialization even if marker file doesn't exist
+                   (useful for cloud deployment where Linear issues already exist)
     """
     iteration = 0
-    is_first_run = not is_linear_initialized(project_dir)
+    # If skip_init is set, pretend we're already initialized
+    is_first_run = not is_linear_initialized(project_dir) and not skip_init
 
     while iteration < max_iterations:
         iteration += 1
