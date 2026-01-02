@@ -206,9 +206,13 @@ async function main(): Promise<void> {
 
   const askQuestion = (): void => {
     rl.question(getPrompt(), async (input) => {
+      // Pause readline during async operations to prevent terminal glitching
+      rl.pause();
+
       const trimmed = input.trim();
 
       if (!trimmed) {
+        rl.resume();
         askQuestion();
         return;
       }
@@ -320,6 +324,7 @@ async function main(): Promise<void> {
             console.log(`${c.dim}Type /help for commands${c.reset}\n`);
         }
 
+        rl.resume();
         askQuestion();
         return;
       }
@@ -447,6 +452,7 @@ async function main(): Promise<void> {
       }
 
       isOutputting = false;
+      rl.resume();
       askQuestion();
     });
   };
